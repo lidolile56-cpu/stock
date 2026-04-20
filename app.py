@@ -2,6 +2,7 @@
 import streamlit as st
 import requests
 import pandas as pd
+import time
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
@@ -69,7 +70,7 @@ def analyze_indicators_5day(closes, highs, lows, timestamps, is_tw_market):
             pos = ((closes[i] - lows[i]) / p_range * 100) if p_range > 0 else 50
             pos_label = "強勢鎖碼" if pos > 80 else "弱勢殺尾" if pos < 20 else "區間對峙"
             tz_tw = timezone(timedelta(hours=8))
-            # ✨ 加入年份顯示格式
+            
             dt = datetime.fromtimestamp(timestamps[i], tz=tz_tw).strftime('%Y/%m/%d') 
             report.append({
                 '交易日期': dt, '收盤價': round(closes[i], 2), '當日位階': f"{pos:.1f}% ({pos_label})", 
@@ -80,19 +81,26 @@ def analyze_indicators_5day(closes, highs, lows, timestamps, is_tw_market):
     return report
 
 # ==========================================
-# 🌐 第三部分：數據採集 (含 4/20 強制對位補強)
+# 🌐 第三部分：數據採集 (🎯 終極破甲快取殺手版)
 # ==========================================
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=15) # 縮短快取壽命為 15 秒
 def get_verified_data(ticker, interval="1d", lookback="2y"):
     us_name_map = {'AAPL': '蘋果', 'NVDA': '輝達', 'TSLA': '特斯拉', 'TSM': '台積電ADR'}
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={lookback}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+    }
+    
+    # 🎯 絕殺：在網址後面掛上每秒不同的亂碼，強迫 Yahoo 給出最新鮮的數據
+    cache_buster = int(time.time())
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={lookback}&_ts={cache_buster}"
+    
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
         result = res.get('chart', {}).get('result', [])[0]
         meta = result.get('meta', {})
         live_price = meta.get('regularMarketPrice')
-        live_time = meta.get('regularMarketTime')
         
         ts = result.get('timestamp', [])
         quote = result.get('indicators', {}).get('quote', [{}])[0]
@@ -106,11 +114,23 @@ def get_verified_data(ticker, interval="1d", lookback="2y"):
                 c_h.append(safe_float(raw_h[i]) if raw_h[i] else safe_float(raw_c[i]))
                 c_l.append(safe_float(raw_l[i]) if raw_l[i] else safe_float(raw_c[i]))
         
-        # 💡 強制補強邏輯：若 Yahoo 尚未將今日 (4/20) 結算進 K 線陣列，手動補入
+        # 🎯 絕殺強制對位：只要 Yahoo 敢給即時價，我們就強行對位到「今天」
         if live_price and c_ts:
-            if live_time > c_ts[-1] + 3600: 
-                c_ts.append(live_time); c_c.append(live_price)
-                c_h.append(max(live_price, c_h[-1])); c_l.append(min(live_price, c_l[-1]))
+            tz_tw = timezone(timedelta(hours=8))
+            now_date = datetime.now(tz_tw).strftime('%Y/%m/%d')
+            last_k_date = datetime.fromtimestamp(c_ts[-1], tz_tw).strftime('%Y/%m/%d')
+            
+            if now_date != last_k_date:
+                # Yahoo 沒更新 K 線？我們自己生一根今天的！
+                c_ts.append(datetime.now(tz_tw).timestamp())
+                c_c.append(live_price)
+                c_h.append(max(live_price, c_h[-1] if c_h else live_price))
+                c_l.append(min(live_price, c_l[-1] if c_l else live_price))
+            else:
+                # 日期對了，但價格落後？我們強行覆蓋最後一筆！
+                c_c[-1] = live_price
+                c_h[-1] = max(c_h[-1], live_price)
+                c_l[-1] = min(c_l[-1], live_price)
 
         symbol = meta.get('symbol', '').split('.')[0]
         name = us_name_map.get(symbol, meta.get('symbol'))
@@ -134,34 +154,30 @@ if stock_input:
     is_tw = ".TW" in stock_input or ".TWO" in stock_input or stock_input.isdigit()
     ticker = f"{stock_input}.TW" if stock_input.isdigit() else stock_input
     
-    with st.spinner('正在分析數據，請稍候...'):
+    with st.spinner('正在突破快取撈取最新數據，請稍候...'):
         d_data = get_verified_data(ticker)
         mo_data = get_verified_data(ticker, interval="1mo", lookback="max")
         wk_data = get_verified_data(ticker, interval="1wk", lookback="max")
 
     if d_data:
-        # 頂部儀表板
         col1, col2, col3 = st.columns(3)
         with col1: st.metric(f"📊 {d_data['name']} 當前價", f"${d_data['price']}", d_data['status'])
         with col2:
             hist_pos = ((d_data['price']-d_data['atl'])/(d_data['ath']-d_data['atl'])*100)
             st.metric("歷史位階", f"{hist_pos:.1f}%")
         
-        # 5日軌跡表格
-        st.subheader("📈 近 5 個交易日動能軌跡 (精確日期對位)")
+        st.subheader("📈 近 5 個交易日動能軌跡 (強制精確對位)")
         history = analyze_indicators_5day(d_data['closes'], d_data['highs'], d_data['lows'], d_data['ts'], is_tw)
         if history:
             df_display = pd.DataFrame(history).drop(columns=['macd_up', 'rsi_val'])
             st.table(df_display)
             
-            # 共振得分計算
             mo_up = (perform_macd_analysis(mo_data['closes'], is_tw)[-1] > perform_macd_analysis(mo_data['closes'], is_tw)[-2]) if mo_data else False
             wk_up = (perform_macd_analysis(wk_data['closes'], is_tw)[-1] > perform_macd_analysis(wk_data['closes'], is_tw)[-2]) if wk_data else False
             resonance_score = sum([history[-1]['macd_up'], wk_up, mo_up])
             score_visual = {3: "🟢 3 分 (主升)", 2: "🟡 2 分 (修復)", 1: "🟠 1 分 (弱彈)", 0: "🔴 0 分 (空頭)"}[resonance_score]
             st.subheader(f"🧠 實時共振得分：{score_visual}")
 
-            # 損益解析與操作建議
             if cost_input > 0:
                 roi = (d_data['price'] - cost_input) / cost_input
                 st.info(f"📊 實時損益：**{roi:+.2%}**")
@@ -171,7 +187,6 @@ if stock_input:
                 elif roi < -0.07: st.error("🛑 **操作建議**：已觸及 7% 紀律止損線，應嚴格執行停損。")
                 else: st.info("🔎 **操作建議**：目前趨勢不明，建議以成本價為防線，觀望為主。")
 
-            # 說明指南
             with st.expander("📖 查看指標定義與操作手冊"):
                 st.markdown("""
                 **➤ 【共振得分定義與操作建議】：**
