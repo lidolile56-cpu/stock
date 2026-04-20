@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
-# 🛠️ 第一部分：基礎工具
+# 📊 第一部分：量化核心函數 (MACD/RSI/EMA)
 # ==========================================
 def safe_float(val, default=0.0):
     if val is None: return default
@@ -22,9 +22,6 @@ def calculate_ema(data, n):
         full_res.append(data[i] * alpha + full_res[-1] * (1 - alpha))
     return full_res
 
-# ==========================================
-# 📊 第二部分：核心量化引擎 (MACD + RSI)
-# ==========================================
 def perform_macd_analysis(closes, is_tw):
     if not closes or len(closes) < 35: return None
     e12 = calculate_ema(closes, 12)
@@ -56,46 +53,32 @@ def analyze_indicators_5day(closes, highs, lows, timestamps, is_tw_market):
     rsi = calculate_rsi(closes, 14)
     if not hist or not rsi: return None
     report = []
+    # 💡 這裡將日期格式化為包含年份的 YYYY/MM/DD
     for i in range(-5, 0):
         try:
             m_now, m_pre = hist[i], hist[i-1]
-            m_up = m_now > m_pre
-            status = ("🔴紅柱" if m_now > 0 else "🟢綠柱") + ("放大" if m_up else "縮減")
+            status = ("🔴紅柱" if m_now > 0 else "🟢綠柱") + ("放大" if m_now > m_pre else "縮減")
             r_val = rsi[i]
-            if r_val >= 80: r_status = "🔥 超買警戒"
-            elif r_val <= 20: r_status = "❄️ 超賣低接"
-            elif r_val >= 50: r_status = "📈 多方控盤"
-            else: r_status = "📉 空方壓制"
+            r_status = "🔥 超買" if r_val >= 80 else "❄️ 超賣" if r_val <= 20 else "📈 多方" if r_val >= 50 else "📉 空方"
             p_range = highs[i] - lows[i]
             pos = ((closes[i] - lows[i]) / p_range * 100) if p_range > 0 else 50
-            pos_label = "強勢鎖碼" if pos > 80 else "弱勢殺尾" if pos < 20 else "區間對峙"
             tz_tw = timezone(timedelta(hours=8))
-            
             dt = datetime.fromtimestamp(timestamps[i], tz=tz_tw).strftime('%Y/%m/%d') 
             report.append({
-                '交易日期': dt, '收盤價': round(closes[i], 2), '當日位階': f"{pos:.1f}% ({pos_label})", 
-                'MACD柱狀': round(m_now, 3), '動能趨勢': status, 'RSI(14)': round(r_val, 1), 'RSI狀態': r_status,
-                'macd_up': m_up, 'rsi_val': r_val
+                '交易日期': dt, '收盤價': round(closes[i], 2), '當日位階': f"{pos:.1f}%", 
+                'MACD柱狀': round(m_now, 3), '動能': status, 'RSI(14)': round(r_val, 1), 'RSI狀態': r_status,
+                'macd_up': m_now > m_pre, 'rsi_val': r_val
             })
         except: continue
     return report
 
 # ==========================================
-# 🌐 第三部分：數據採集 (🎯 終極破甲快取殺手版)
+# 🌐 第三部分：數據採集 (🎯 強制對位與來源校核)
 # ==========================================
-@st.cache_data(ttl=15) # 縮短快取壽命為 15 秒
+@st.cache_data(ttl=15)
 def get_verified_data(ticker, interval="1d", lookback="2y"):
-    us_name_map = {'AAPL': '蘋果', 'NVDA': '輝達', 'TSLA': '特斯拉', 'TSM': '台積電ADR'}
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-    }
-    
-    # 🎯 絕殺：在網址後面掛上每秒不同的亂碼，強迫 Yahoo 給出最新鮮的數據
-    cache_buster = int(time.time())
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={lookback}&_ts={cache_buster}"
-    
+    headers = {'User-Agent': 'Mozilla/5.0', 'Cache-Control': 'no-cache'}
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={lookback}&_ts={int(time.time())}"
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
         result = res.get('chart', {}).get('result', [])[0]
@@ -114,92 +97,69 @@ def get_verified_data(ticker, interval="1d", lookback="2y"):
                 c_h.append(safe_float(raw_h[i]) if raw_h[i] else safe_float(raw_c[i]))
                 c_l.append(safe_float(raw_l[i]) if raw_l[i] else safe_float(raw_c[i]))
         
-        # 🎯 絕殺強制對位：只要 Yahoo 敢給即時價，我們就強行對位到「今天」
+        # 💡 強制補強邏輯：如果收盤後 API 未結算，手動注入當日收盤數據
+        tz_tw = timezone(timedelta(hours=8))
+        now_tw = datetime.now(tz_tw)
         if live_price and c_ts:
-            tz_tw = timezone(timedelta(hours=8))
-            now_date = datetime.now(tz_tw).strftime('%Y/%m/%d')
-            last_k_date = datetime.fromtimestamp(c_ts[-1], tz_tw).strftime('%Y/%m/%d')
-            
-            if now_date != last_k_date:
-                # Yahoo 沒更新 K 線？我們自己生一根今天的！
-                c_ts.append(datetime.now(tz_tw).timestamp())
-                c_c.append(live_price)
-                c_h.append(max(live_price, c_h[-1] if c_h else live_price))
-                c_l.append(min(live_price, c_l[-1] if c_l else live_price))
+            today_str = now_tw.strftime('%Y/%m/%d')
+            last_date_str = datetime.fromtimestamp(c_ts[-1], tz=tz_tw).strftime('%Y/%m/%d')
+            if today_str != last_date_str:
+                c_ts.append(now_tw.timestamp()); c_c.append(live_price)
+                c_h.append(max(live_price, c_h[-1])); c_l.append(min(live_price, c_l[-1]))
             else:
-                # 日期對了，但價格落後？我們強行覆蓋最後一筆！
-                c_c[-1] = live_price
-                c_h[-1] = max(c_h[-1], live_price)
-                c_l[-1] = min(c_l[-1], live_price)
+                c_c[-1] = live_price # 確保最後一筆是最新實時價
 
-        symbol = meta.get('symbol', '').split('.')[0]
-        name = us_name_map.get(symbol, meta.get('symbol'))
-        return {'name': name, 'price': live_price, 'ath': max(c_h), 'atl': min(c_l), 
+        return {'name': meta.get('symbol'), 'price': live_price, 'ath': max(c_h), 'atl': min(c_l), 
                 'closes': c_c, 'highs': c_h, 'lows': c_l, 'ts': c_ts, 
-                'status': "🚨 注意/處置監控" if meta.get('exchangeDataDelayedBy', 0) > 0 else "✅ 正常交易"}
+                'exchange': meta.get('exchangeName', 'Yahoo Finance')}
     except: return None
 
 # ==========================================
-# 🚀 第四部分：網頁介面
+# 🚀 第四部分：網頁介面與視覺化
 # ==========================================
-st.set_page_config(page_title="量化導航系統 2026版", layout="wide")
+st.set_page_config(page_title="量化導航系統 2026", layout="wide")
 st.title("🌍 全球多週期全量量化導航系統")
-st.markdown(f"🕒 **最後更新時間：{datetime.now(timezone(timedelta(hours=8))).strftime('%Y/%m/%d %H:%M:%S')}**")
+st.markdown(f"📊 **數據來源：Yahoo Finance 官方數據源 | 系統對時：{datetime.now(timezone(timedelta(hours=8))).strftime('%Y/%m/%d %H:%M:%S')}**")
 
 st.sidebar.header("🔍 查詢設定")
-stock_input = st.sidebar.text_input("輸入股票代碼 (台股請加 .TW)", value="2330.TW").upper()
-cost_input = st.sidebar.number_input("持有成本 (0 代表觀望)", value=0.0)
+stock_input = st.sidebar.text_input("輸入代碼 (台股需加 .TW)", value="2330.TW").upper()
+cost_input = st.sidebar.number_input("持有成本 (0為觀望)", value=0.0)
 
 if stock_input:
-    is_tw = ".TW" in stock_input or ".TWO" in stock_input or stock_input.isdigit()
-    ticker = f"{stock_input}.TW" if stock_input.isdigit() else stock_input
-    
-    with st.spinner('正在突破快取撈取最新數據，請稍候...'):
-        d_data = get_verified_data(ticker)
-        mo_data = get_verified_data(ticker, interval="1mo", lookback="max")
-        wk_data = get_verified_data(ticker, interval="1wk", lookback="max")
+    with st.spinner('正在同步官方數據並核對年份軌跡...'):
+        d_data = get_verified_data(stock_input)
+        mo_data = get_verified_data(stock_input, interval="1mo", lookback="max")
+        wk_data = get_verified_data(stock_input, interval="1wk", lookback="max")
 
     if d_data:
+        # 儀表板卡片
         col1, col2, col3 = st.columns(3)
-        with col1: st.metric(f"📊 {d_data['name']} 當前價", f"${d_data['price']}", d_data['status'])
+        with col1: st.metric(f"📊 {d_data['name']} 當前價", f"${d_data['price']}", f"來源: {d_data['exchange']}")
         with col2:
             hist_pos = ((d_data['price']-d_data['atl'])/(d_data['ath']-d_data['atl'])*100)
             st.metric("歷史位階", f"{hist_pos:.1f}%")
         
-        st.subheader("📈 近 5 個交易日動能軌跡 (強制精確對位)")
-        history = analyze_indicators_5day(d_data['closes'], d_data['highs'], d_data['lows'], d_data['ts'], is_tw)
+        # --- 趨勢圖表區 ---
+        st.subheader("📈 價格趨勢可視化 (含年份對齊)")
+        tz_tw = timezone(timedelta(hours=8))
+        chart_dates = [datetime.fromtimestamp(t, tz=tz_tw).strftime('%Y/%m/%d') for t in d_data['ts']]
+        chart_df = pd.DataFrame({'日期': chart_dates, '收盤價': d_data['closes']}).set_index('日期')
+        st.line_chart(chart_df)
+
+        # --- 數據分析表格 ---
+        st.subheader("📅 近 5 個交易日量化軌跡 (精確年份格式)")
+        history = analyze_indicators_5day(d_data['closes'], d_data['highs'], d_data['lows'], d_data['ts'], ".TW" in stock_input)
         if history:
-            df_display = pd.DataFrame(history).drop(columns=['macd_up', 'rsi_val'])
-            st.table(df_display)
+            st.table(pd.DataFrame(history).drop(columns=['macd_up', 'rsi_val']))
             
-            mo_up = (perform_macd_analysis(mo_data['closes'], is_tw)[-1] > perform_macd_analysis(mo_data['closes'], is_tw)[-2]) if mo_data else False
-            wk_up = (perform_macd_analysis(wk_data['closes'], is_tw)[-1] > perform_macd_analysis(wk_data['closes'], is_tw)[-2]) if wk_data else False
+            # 共振得分
+            mo_up = (perform_macd_analysis(mo_data['closes'], True)[-1] > perform_macd_analysis(mo_data['closes'], True)[-2]) if mo_data else False
+            wk_up = (perform_macd_analysis(wk_data['closes'], True)[-1] > perform_macd_analysis(wk_data['closes'], True)[-2]) if wk_data else False
             resonance_score = sum([history[-1]['macd_up'], wk_up, mo_up])
-            score_visual = {3: "🟢 3 分 (主升)", 2: "🟡 2 分 (修復)", 1: "🟠 1 分 (弱彈)", 0: "🔴 0 分 (空頭)"}[resonance_score]
-            st.subheader(f"🧠 實時共振得分：{score_visual}")
+            st.subheader(f"🧠 實時共振得分：{ {3:'🟢 3 分 (主升)', 2:'🟡 2 分 (修復)', 1:'🟠 1 分 (弱彈)', 0:'🔴 0 分 (空頭)'}[resonance_score] }")
 
             if cost_input > 0:
                 roi = (d_data['price'] - cost_input) / cost_input
-                st.info(f"📊 實時損益：**{roi:+.2%}**")
-                current_rsi = history[-1]['rsi_val']
-                if resonance_score == 3 and current_rsi < 80: st.success("✅ **操作建議**：三強共振標的且 RSI 尚未超買，建議持股續抱，讓獲利奔跑。")
-                elif current_rsi >= 80: st.error("🚨 **操作建議**：RSI 已進入極度超買區，短線漲幅過大，建議逢高分批減碼，切忌追高。")
-                elif roi < -0.07: st.error("🛑 **操作建議**：已觸及 7% 紀律止損線，應嚴格執行停損。")
-                else: st.info("🔎 **操作建議**：目前趨勢不明，建議以成本價為防線，觀望為主。")
-
-            with st.expander("📖 查看指標定義與操作手冊"):
-                st.markdown("""
-                **➤ 【共振得分定義與操作建議】：**
-                * 🟢 **3 分 (主升共振)**：月、週、日線動能皆向上。波段爆發力強。
-                * 🟡 **2 分 (趨勢修復)**：長短週期動能分歧。屬震盪整理格局。
-                * 🟠 **1 分 (弱勢反彈)**：僅單一週期轉強，大勢依然向下。易遇假突破。
-                * 🔴 **0 分 (空頭排列)**：月、週、日線動能皆向下。建議嚴格迴避。
-                
-                **➤ 【RSI (14日) 狀態定義與操作指南】：**
-                * 🔥 **RSI ≥ 80 (超買警戒)**：市場極度狂熱，隨時面臨獲利了結賣壓。
-                * 📈 **RSI 50~79 (多方控盤)**：買盤力道勝出，趨勢偏多運行。
-                * 📉 **RSI 21~49 (空方壓制)**：賣盤力道勝出，趨勢偏空運行。
-                * ❄️ **RSI ≤ 20 (超賣低接)**：市場恐慌拋售，可留意跌深反彈契機。
-                """)
+                st.info(f"💰 您的成本：{cost_input} ｜ 📊 實時損益：**{roi:+.2%}**")
     else:
-        st.error("❌ 無法抓取數據。請檢查股票代碼，台股請務必加後綴 (如: 2330.TW)。")
+        st.error("❌ 抓取失敗。請確認代碼 (台股請加 .TW)。")
