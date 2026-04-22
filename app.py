@@ -1,4 +1,4 @@
-# 檔名：20150422 MACD + RSI 終極校準版.py
+# 檔名：20150422 MACD + RSI 終極通用型校準版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -43,15 +43,20 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：數據採集
+# 🌐 第二部分：數據採集 (🎯 強固型容錯機制)
 # ==========================================
 @st.cache_data(ttl=10)
 def get_verified_data(ticker):
     headers = {'User-Agent': 'Mozilla/5.0'}
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2y&_ts={int(time.time())}"
     try:
-        res = requests.get(url, headers=headers, timeout=10).json()
-        result = res.get('chart', {}).get('result', [])[0]
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200: return None # 找不到股票直接回傳空值，不報錯
+        
+        json_data = res.json()
+        if not json_data.get('chart', {}).get('result'): return None
+        
+        result = json_data['chart']['result'][0]
         meta = result.get('meta', {})
         live_price = meta.get('regularMarketPrice')
         ts = result.get('timestamp', [])
@@ -86,30 +91,36 @@ def get_verified_data(ticker):
 # 🚀 第三部分：網頁介面
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
-st.title("🌍 全球量化導航系統 (精確時間與年份版)")
+st.title("🌍 全球量化導航系統 (通用型雙引擎版)")
 
 st.sidebar.header("🔍 查詢設定")
-# 輸入框預設改為純數字，方便測試
-stock_input = st.sidebar.text_input("輸入股票代碼 (例: 2330 或 AAPL)", value="2330").strip().upper()
+stock_input = st.sidebar.text_input("輸入股票代碼 (例: 2330, 3595, AAPL)", value="2330").strip().upper()
 cost_input = st.sidebar.number_input("持有成本 (0 代表觀望)", value=0.0)
 
 if stock_input:
-    # 💡 修正區塊：自動判斷並補齊 Yahoo 格式
+    # 💡 雙引擎自動尋標機制
+    tickers_to_try = []
     if stock_input.isdigit():
-        ticker = f"{stock_input}.TW"
+        tickers_to_try = [f"{stock_input}.TW", f"{stock_input}.TWO"]
     else:
-        ticker = stock_input
-        
-    is_tw = ".TW" in ticker or ".TWO" in ticker
+        tickers_to_try = [stock_input]
 
-    tz_tw = timezone(timedelta(hours=8))
-    report_time = datetime.now(tz_tw).strftime('%Y/%m/%d %H:%M:%S')
+    d_data = None
+    final_ticker = ""
     
-    with st.spinner(f'正在分析 {ticker} 的數據...'):
-        d_data = get_verified_data(ticker)
-        
+    with st.spinner(f'正在多重資料庫中搜尋 {stock_input}，請稍候...'):
+        for t in tickers_to_try:
+            d_data = get_verified_data(t)
+            if d_data:
+                final_ticker = t
+                break # 找到資料就立刻跳出迴圈
+                
     if d_data:
-        st.success(f"✅ 分析完成！報告產製時間：{report_time}")
+        tz_tw = timezone(timedelta(hours=8))
+        report_time = datetime.now(tz_tw).strftime('%Y/%m/%d %H:%M:%S')
+        is_tw = ".TW" in final_ticker or ".TWO" in final_ticker
+        
+        st.success(f"✅ 成功抓取！標的：{final_ticker} ｜ 報告產製時間：{report_time}")
         
         full_dates = [datetime.fromtimestamp(t, tz=tz_tw).strftime('%Y/%m/%d') for t in d_data['ts']]
         
@@ -147,4 +158,4 @@ if stock_input:
             roi = (d_data['price'] - cost_input) / cost_input
             st.info(f"💰 持有成本：{cost_input} ｜ 📊 實時損益：**{roi:+.2%}** (更新至 {report_time})")
     else:
-        st.error(f"❌ 無法抓取數據。請檢查代碼「{ticker}」是否存在，或嘗試手動加上 .TW (上市) / .TWO (上櫃)。")
+        st.error(f"❌ 無法抓取數據。請檢查代碼「{stock_input}」是否存在。若是特殊標的，可嘗試手動加入後綴 (如 .TW, .TWO)。")
