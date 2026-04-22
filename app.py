@@ -33,7 +33,6 @@ def calculate_rsi(closes, period=14):
     avg_gain = sum(max(0, closes[i] - closes[i-1]) for i in range(1, period+1)) / period
     avg_loss = sum(max(0, closes[i-1] - closes[i]) for i in range(1, period+1)) / period
     
-    # 💡 修正：補回遺失的第一筆 RSI 計算值，確保陣列長度與日期完全一致
     rsi_series.append(100.0 - (100.0 / (1.0 + (avg_gain / (avg_loss if avg_loss != 0 else 0.0001)))))
     
     for i in range(period + 1, len(closes)):
@@ -90,26 +89,37 @@ st.set_page_config(page_title="量化導航 2026", layout="wide")
 st.title("🌍 全球量化導航系統 (精確時間與年份版)")
 
 st.sidebar.header("🔍 查詢設定")
-stock_input = st.sidebar.text_input("輸入股票代碼 (例: 2330.TW)", value="2330.TW").upper()
+# 輸入框預設改為純數字，方便測試
+stock_input = st.sidebar.text_input("輸入股票代碼 (例: 2330 或 AAPL)", value="2330").strip().upper()
 cost_input = st.sidebar.number_input("持有成本 (0 代表觀望)", value=0.0)
 
 if stock_input:
+    # 💡 修正區塊：自動判斷並補齊 Yahoo 格式
+    if stock_input.isdigit():
+        ticker = f"{stock_input}.TW"
+    else:
+        ticker = stock_input
+        
+    is_tw = ".TW" in ticker or ".TWO" in ticker
+
     tz_tw = timezone(timedelta(hours=8))
     report_time = datetime.now(tz_tw).strftime('%Y/%m/%d %H:%M:%S')
     
-    d_data = get_verified_data(stock_input)
+    with st.spinner(f'正在分析 {ticker} 的數據...'):
+        d_data = get_verified_data(ticker)
+        
     if d_data:
         st.success(f"✅ 分析完成！報告產製時間：{report_time}")
         
         full_dates = [datetime.fromtimestamp(t, tz=tz_tw).strftime('%Y/%m/%d') for t in d_data['ts']]
         
         # --- 走勢圖表與年份顯示 ---
-        st.subheader("📈 收盤價走勢 (包含年份)")
+        st.subheader(f"📈 {d_data['name']} 收盤價走勢")
         price_df = pd.DataFrame({'日期': full_dates, '收盤價': d_data['closes']}).drop_duplicates(subset=['日期']).set_index('日期')
         st.line_chart(price_df)
 
         # --- MACD 與 RSI 圖表 ---
-        dif, dea, hist = perform_macd_full(d_data['closes'], ".TW" in stock_input)
+        dif, dea, hist = perform_macd_full(d_data['closes'], is_tw)
         rsi_vals = calculate_rsi(d_data['closes'])
         
         col1, col2 = st.columns(2)
@@ -137,4 +147,4 @@ if stock_input:
             roi = (d_data['price'] - cost_input) / cost_input
             st.info(f"💰 持有成本：{cost_input} ｜ 📊 實時損益：**{roi:+.2%}** (更新至 {report_time})")
     else:
-        st.error("❌ 無法抓取數據。請檢查代碼格式。")
+        st.error(f"❌ 無法抓取數據。請檢查代碼「{ticker}」是否存在，或嘗試手動加上 .TW (上市) / .TWO (上櫃)。")
