@@ -1,4 +1,4 @@
-# 檔名：20150422 MACD + RSI 台股全市場終極解譯版.py
+# 檔名：20150422 MACD + RSI 台股全市場完美對位版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -43,15 +43,21 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：全市場暴力搜尋與解譯引擎
+# 🌐 第二部分：全市場解譯與空殼過濾引擎
 # ==========================================
 def search_ticker(query):
-    """強力中文解譯：無視 Yahoo 錯誤後綴，強制提取純代碼"""
+    """強效中英雙向搜尋引擎 (自帶精確後綴)"""
     common_stocks = {
-        "台積電": "2330", "鴻海": "2317", "聯發科": "2454", "廣達": "2382",
-        "元太": "8069", "鈊象": "3293", "環球晶": "6488", "群聯": "8299", 
-        "世界": "5347", "譜瑞": "4966", "信驊": "5274", "力旺": "3529",
-        "穩懋": "3105", "雙鴻": "3324", "中美晶": "5483", "長榮": "2603"
+        # 上市 (TW)
+        "台積電": "2330.TW", "鴻海": "2317.TW", "聯發科": "2454.TW", "廣達": "2382.TW",
+        "長榮": "2603.TW", "陽明": "2609.TW", "萬海": "2615.TW", "聯電": "2303.TW",
+        "大立光": "3008.TW", "緯創": "3231.TW", "富邦金": "2881.TW", "星宇航空": "2646.TW",
+        # 上櫃 (TWO)
+        "元太": "8069.TWO", "鈊象": "3293.TWO", "環球晶": "6488.TWO", "群聯": "8299.TWO", 
+        "世界": "5347.TWO", "譜瑞": "4966.TWO", "信驊": "5274.TWO", "力旺": "3529.TWO",
+        "穩懋": "3105.TWO", "雙鴻": "3324.TWO", "中美晶": "5483.TWO", "連展投控": "3710.TWO",
+        # 興櫃 (TE)
+        "乾杯": "1269.TE"
     }
     for name, symbol in common_stocks.items():
         if name in query:
@@ -65,18 +71,14 @@ def search_ticker(query):
         res = requests.get(search_url, headers=headers, params=params, timeout=5).json()
         quotes = res.get('quotes', [])
         
-        # 尋找台股並「強制剝離後綴」只留數字
+        # 優先篩選出台股 (.TW 或 .TWO 或 .TE)
         for q in quotes:
             sym = q.get('symbol', '')
             if sym.endswith('.TW') or sym.endswith('.TWO') or sym.endswith('.TE'):
-                clean_symbol = sym.split('.')[0]
-                return clean_symbol, q.get('longname') or q.get('shortname') or query
+                return sym, q.get('longname') or q.get('shortname') or query
                 
-        # 若非台股 (如美股)，直接回傳完整代碼
         if quotes:
-            sym = quotes[0].get('symbol', '')
-            clean_symbol = sym.split('.')[0] if sym.split('.')[0].isdigit() else sym
-            return clean_symbol, quotes[0].get('longname') or quotes[0].get('shortname') or query
+            return quotes[0].get('symbol'), quotes[0].get('longname') or quotes[0].get('shortname') or query
     except: pass
     
     return None, None
@@ -88,42 +90,60 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
     try:
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code != 200: return None
-        result = res.json()['chart']['result'][0]
+        
+        json_data = res.json()
+        if not json_data.get('chart', {}).get('result'): return None
+        
+        result = json_data['chart']['result'][0]
         meta = result.get('meta', {})
         live_price = meta.get('regularMarketPrice')
-        ts, quote = result.get('timestamp', []), result.get('indicators', {}).get('quote', [{}])[0]
-        raw_c = quote.get('close', [])
-        c_ts, c_c = [], []
+        ts = result.get('timestamp', [])
+        
+        # 💡 核心修復：拒絕空殼資料！如果 K 線陣列沒有資料，直接判定為無效市場並退回
+        if not ts or len(ts) < 5: 
+            return None 
+            
+        quote = result.get('indicators', {}).get('quote', [{}])[0]
+        raw_c, raw_h, raw_l = quote.get('close', []), quote.get('high', []), quote.get('low', [])
+        
+        c_ts, c_c, c_h, c_l = [], [], [], []
         for i in range(len(ts)):
             if raw_c[i] is not None:
                 c_ts.append(ts[i]); c_c.append(float(raw_c[i]))
-                
+                c_h.append(float(raw_h[i]) if raw_h[i] else float(raw_c[i]))
+                c_l.append(float(raw_l[i]) if raw_l[i] else float(raw_c[i]))
+
         tz_tw = timezone(timedelta(hours=8))
+        now_tw = datetime.now(tz_tw)
         if interval == "1d" and live_price and c_ts:
-            if datetime.now(tz_tw).date() > datetime.fromtimestamp(c_ts[-1], tz=tz_tw).date():
-                c_ts.append(datetime.now(tz_tw).timestamp()); c_c.append(live_price)
-            else: c_c[-1] = live_price
-            
+            today_date = now_tw.date()
+            last_k_date = datetime.fromtimestamp(c_ts[-1], tz=tz_tw).date()
+            if today_date > last_k_date: 
+                c_ts.append(now_tw.timestamp()); c_c.append(live_price)
+                c_h.append(max(live_price, c_h[-1])); c_l.append(min(live_price, c_l[-1]))
+            else:
+                c_c[-1] = live_price
+                c_h[-1] = max(c_h[-1], live_price); c_l[-1] = min(c_l[-1], live_price)
+
         official_name = meta.get('longName') or meta.get('shortName') or ticker
         return {'closes': c_c, 'ts': c_ts, 'price': live_price, 'name': official_name, 'symbol': meta.get('symbol')}
     except: return None
 
 # ==========================================
-# 🚀 第三部分：網頁介面與三市場自動掃描
+# 🚀 第三部分：網頁介面
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
-st.title("🌍 全球量化導航系統 (台股全市場解譯版)")
+st.title("🌍 全球量化導航系統 (台股全市場完美對位版)")
 
 st.sidebar.header("🔍 查詢設定")
-stock_input = st.sidebar.text_input("輸入名稱或代碼 (例: 鈊象, 星宇航空, AAPL)", value="台積電").strip()
+stock_input = st.sidebar.text_input("輸入名稱或代碼 (例: 鈊象, 乾杯, AAPL)", value="鈊象").strip()
 cost_input = st.sidebar.number_input("持有成本 (0 代表觀望)", value=0.0)
 
 if stock_input:
     d_data, wk_data, mo_data = None, None, None
     found_symbol, display_name = None, None
 
-    with st.spinner(f'正在解譯中文並執行全市場掃描 (上市/上櫃/興櫃)...'):
-        # 1. 中文解譯或英文大寫轉換
+    with st.spinner(f'正在解譯中文並避開空殼資料，請稍候...'):
         if re.search(r'[\u4e00-\u9fff]', stock_input):
             found_symbol, display_name = search_ticker(stock_input)
         else:
@@ -131,35 +151,38 @@ if stock_input:
             display_name = stock_input.upper()
 
         if found_symbol:
-            # 2. 強制剝離與三市場掃描 (Triple Sweep)
+            tickers_to_try = []
             base_symbol = found_symbol.split('.')[0]
-            
-            if base_symbol.isdigit(): 
-                # 只要是數字，無差別測試三大市場
-                tickers_to_try = [f"{base_symbol}.TW", f"{base_symbol}.TWO", f"{base_symbol}.TE"]
+
+            if base_symbol.isdigit():
+                # 💡 如果 API 或字典已提供了特定後綴，優先嘗試
+                if '.' in found_symbol:
+                    tickers_to_try.append(found_symbol)
+                # 接著將 TW, TWO, TE 全都加入後補名單 (暴力掃描)
+                for sfx in ['.TW', '.TWO', '.TE']:
+                    if f"{base_symbol}{sfx}" not in tickers_to_try:
+                        tickers_to_try.append(f"{base_symbol}{sfx}")
             else:
-                # 美股或特殊代碼
-                tickers_to_try = [found_symbol]
+                tickers_to_try = [found_symbol] # 美股
             
             for t in tickers_to_try:
+                # 只要抓到有效的 d_data (非空殼)，就會立刻停止嘗試
                 d_data = get_verified_data(t, "1d", "2y")
                 if d_data:
                     wk_data = get_verified_data(t, "1wk", "max")
                     mo_data = get_verified_data(t, "1mo", "max")
-                    break # 成功抓到資料，立刻停止嘗試
+                    break 
 
     if d_data:
         tz_tw = timezone(timedelta(hours=8))
         report_time = datetime.now(tz_tw).strftime('%Y/%m/%d %H:%M:%S')
         is_tw = d_data['symbol'].endswith('.TW') or d_data['symbol'].endswith('.TWO') or d_data['symbol'].endswith('.TE')
         
-        # 確保顯示最友善的中文名稱
         final_name = display_name if re.search(r'[\u4e00-\u9fff]', display_name) else d_data['name']
         display_label = f"{final_name} ({d_data['symbol']})"
         
         st.success(f"✅ 成功對位！標的：{display_label} ｜ 報告產製時間：{report_time}")
         
-        # --- 圖表區 (隱藏 X 軸日期) ---
         full_dates = [datetime.fromtimestamp(t, tz=tz_tw).strftime('%Y/%m/%d') for t in d_data['ts']]
         x_axis_clean = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
 
@@ -179,11 +202,10 @@ if stock_input:
             df = pd.DataFrame({'日期': full_dates, 'RSI': rsi_vals}).drop_duplicates(subset=['日期'])
             st.altair_chart(alt.Chart(df).mark_line(color='#9467bd').encode(x=x_axis_clean, y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None), tooltip=['日期', 'RSI']), use_container_width=True)
 
-        # --- 核心決策區 ---
         st.divider()
         st.subheader(f"💡 {display_label} 核心量化決策報告")
         
-        h_d_up = hist[-1] > hist[-2]
+        h_d_up = hist[-1] > hist[-2] if hist else False
         _, _, h_w = perform_macd_full(wk_data['closes'], is_tw) if wk_data else (0,0,[0,0])
         _, _, h_m = perform_macd_full(mo_data['closes'], is_tw) if mo_data else (0,0,[0,0])
         resonance_score = sum([h_d_up, (len(h_w)>1 and h_w[-1]>h_w[-2]), (len(h_m)>1 and h_m[-1]>h_m[-2])])
@@ -198,7 +220,7 @@ if stock_input:
             st.metric("實時共振得分", score_info[resonance_score])
 
         with col_advice:
-            curr_rsi = rsi_vals[-1]
+            curr_rsi = rsi_vals[-1] if rsi_vals else 50
             if cost_input > 0 and (d_data['price'] - cost_input) / cost_input < -0.07:
                 st.error("🛑 **建議：執行止損**。虧損已達 7% 紀律線，建議優先回收資金。")
             elif curr_rsi >= 80:
@@ -217,4 +239,4 @@ if stock_input:
         table_df = pd.DataFrame({'交易日期': full_dates, '收盤價': d_data['closes'], 'MACD柱狀': [round(x,3) for x in hist], 'RSI(14)': [round(x,1) for x in rsi_vals]}).drop_duplicates(subset=['交易日期'], keep='last').tail(5)
         st.table(table_df)
     else:
-        st.error(f"❌ 無法透過「{stock_input}」抓取數據。建議確認名稱是否正確，或直接輸入股號 (例如: 3293)。")
+        st.error(f"❌ 無法透過「{stock_input}」抓取有效數據。請確認名稱或代碼是否正確。")
