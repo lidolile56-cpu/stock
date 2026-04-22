@@ -1,13 +1,14 @@
-# 檔名：20150422 MACD + RSI 終極量化決策版.py
+# 檔名：20150422 MACD + RSI 終極通用對位版.py
 import streamlit as st
 import requests
 import pandas as pd
 import time
 import altair as alt
+import re
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
-# 📊 第一部分：量化核心邏輯 (計算 MACD 與 RSI)
+# 📊 第一部分：量化核心邏輯
 # ==========================================
 def calculate_ema(data, n):
     if len(data) < n: return [data[-1]] * len(data)
@@ -42,8 +43,21 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：數據採集 (雙引擎與多週期抓取)
+# 🌐 第二部分：搜尋與數據採集 (🎯 名稱代碼連結核心)
 # ==========================================
+def search_ticker(query):
+    """透過 Yahoo API 將中文名稱轉換為代碼"""
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    search_url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}&lang=zh-Hant-TW&region=TW"
+    try:
+        res = requests.get(search_url, headers=headers, timeout=5).json()
+        quotes = res.get('quotes', [])
+        if quotes:
+            # 優先回傳最匹配的代碼與名稱
+            return quotes[0].get('symbol'), quotes[0].get('longname') or quotes[0].get('shortname')
+    except: pass
+    return None, None
+
 @st.cache_data(ttl=10)
 def get_verified_data(ticker, interval="1d", range_val="2y"):
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -60,122 +74,117 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
         for i in range(len(ts)):
             if raw_c[i] is not None:
                 c_ts.append(ts[i]); c_c.append(float(raw_c[i]))
-        # 補強今日數據 (僅限日線)
+        
+        # 補強今日數據
+        tz_tw = timezone(timedelta(hours=8))
         if interval == "1d" and live_price and c_ts:
-            tz_tw = timezone(timedelta(hours=8))
             if datetime.now(tz_tw).date() > datetime.fromtimestamp(c_ts[-1], tz=tz_tw).date():
                 c_ts.append(datetime.now(tz_tw).timestamp()); c_c.append(live_price)
             else: c_c[-1] = live_price
-        return {'closes': c_c, 'ts': c_ts, 'price': live_price, 'name': meta.get('symbol')}
+        
+        # 獲取官方中文或英文名稱
+        official_name = meta.get('longName') or meta.get('shortName') or ticker
+        return {'closes': c_c, 'ts': c_ts, 'price': live_price, 'name': official_name, 'symbol': meta.get('symbol')}
     except: return None
 
 # ==========================================
-# 🚀 第三部分：網頁介面與策略引擎
+# 🚀 第三部分：網頁介面
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
-st.title("🌍 全球量化導航系統 (精準策略建議版)")
+st.title("🌍 全球量化導航系統 (名稱與代碼連結版)")
 
 st.sidebar.header("🔍 查詢設定")
-stock_input = st.sidebar.text_input("輸入代碼 (例: 2330, 3595, AAPL)", value="2330").strip().upper()
+stock_input = st.sidebar.text_input("輸入股票名稱或代碼 (例: 台積電, 2330, AAPL)", value="台積電").strip()
 cost_input = st.sidebar.number_input("持有成本 (0 代表觀望)", value=0.0)
 
 if stock_input:
-    tickers = [f"{stock_input}.TW", f"{stock_input}.TWO"] if stock_input.isdigit() else [stock_input]
+    # 💡 啟動搜尋引擎判斷
     d_data, wk_data, mo_data = None, None, None
-    final_ticker = ""
+    found_symbol, found_name = None, None
 
-    with st.spinner(f'正在進行多週期掃描 {stock_input}...'):
-        for t in tickers:
-            d_data = get_verified_data(t, "1d", "2y")
-            if d_data:
-                wk_data = get_verified_data(t, "1wk", "max")
-                mo_data = get_verified_data(t, "1mo", "max")
-                final_ticker = t
-                break
+    with st.spinner(f'正在搜尋並對位「{stock_input}」的數據...'):
+        # 判斷是否包含中文字元
+        if re.search(r'[\u4e00-\u9fff]', stock_input):
+            found_symbol, found_name = search_ticker(stock_input)
+        else:
+            found_symbol = stock_input.upper()
+
+        if found_symbol:
+            # 嘗試抓取日/週/月線
+            tickers_to_try = [found_symbol]
+            if found_symbol.isdigit(): # 若為純數字則自動嘗試 TW/TWO
+                tickers_to_try = [f"{found_symbol}.TW", f"{found_symbol}.TWO"]
+            
+            for t in tickers_to_try:
+                d_data = get_verified_data(t, "1d", "2y")
+                if d_data:
+                    wk_data = get_verified_data(t, "1wk", "max")
+                    mo_data = get_verified_data(t, "1mo", "max")
+                    break
 
     if d_data:
         tz_tw = timezone(timedelta(hours=8))
         report_time = datetime.now(tz_tw).strftime('%Y/%m/%d %H:%M:%S')
-        st.success(f"✅ 掃描完成！標的：{final_ticker} ｜ 報告產製時間：{report_time}")
+        is_tw = ".TW" in d_data['symbol'] or ".TWO" in d_data['symbol']
         
-        # 數據計算
-        is_tw = ".TW" in final_ticker or ".TWO" in final_ticker
-        dif, dea, hist = perform_macd_full(d_data['closes'], is_tw)
-        rsi_vals = calculate_rsi(d_data['closes'])
+        # 💡 在報表標頭完整顯示 名稱 與 代碼
+        display_label = f"{d_data['name']} ({d_data['symbol']})"
+        st.success(f"✅ 成功對位！標的：{display_label} ｜ 報告產製時間：{report_time}")
         
-        # --- 📈 視覺化圖表區 (隱藏 X 軸標籤) ---
+        # 圖表邏輯 (隱藏 X 軸日期)
         full_dates = [datetime.fromtimestamp(t, tz=tz_tw).strftime('%Y/%m/%d') for t in d_data['ts']]
         x_axis_clean = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
 
-        st.subheader(f"📊 {d_data['name']} 多維度量化走勢")
+        st.subheader(f"📈 {display_label} 多維度量化趨勢")
         col_price, col_macd, col_rsi = st.columns(3)
         
-        with col_price:
-            price_df = pd.DataFrame({'日期': full_dates, '價格': d_data['closes']}).drop_duplicates(subset=['日期'])
-            chart = alt.Chart(price_df).mark_line(color='#1f77b4').encode(x=x_axis_clean, y=alt.Y('價格', scale=alt.Scale(zero=False), title=None), tooltip=['日期', '價格'])
-            st.altair_chart(chart, use_container_width=True)
-        with col_macd:
-            macd_df = pd.DataFrame({'日期': full_dates, '柱狀': hist}).drop_duplicates(subset=['日期'])
-            chart = alt.Chart(macd_df).mark_bar().encode(x=x_axis_clean, y=alt.Y('柱狀', title=None), color=alt.condition(alt.datum['柱狀'] > 0, alt.value('#ff4b4b'), alt.value('#00cc96')), tooltip=['日期', '柱狀'])
-            st.altair_chart(chart, use_container_width=True)
-        with col_rsi:
-            rsi_df = pd.DataFrame({'日期': full_dates, 'RSI': rsi_vals}).drop_duplicates(subset=['日期'])
-            chart = alt.Chart(rsi_df).mark_line(color='#9467bd').encode(x=x_axis_clean, y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None), tooltip=['日期', 'RSI'])
-            st.altair_chart(chart, use_container_width=True)
+        dif, dea, hist = perform_macd_full(d_data['closes'], is_tw)
+        rsi_vals = calculate_rsi(d_data['closes'])
 
-        # --- 🧠 核心：共振得分與操作建議 ---
+        with col_price:
+            df = pd.DataFrame({'日期': full_dates, '價格': d_data['closes']}).drop_duplicates(subset=['日期'])
+            st.altair_chart(alt.Chart(df).mark_line().encode(x=x_axis_clean, y=alt.Y('價格', scale=alt.Scale(zero=False), title=None), tooltip=['日期', '價格']), use_container_width=True)
+        with col_macd:
+            df = pd.DataFrame({'日期': full_dates, '柱狀': hist}).drop_duplicates(subset=['日期'])
+            st.altair_chart(alt.Chart(df).mark_bar().encode(x=x_axis_clean, y=alt.Y('柱狀', title=None), color=alt.condition(alt.datum['柱狀'] > 0, alt.value('#ff4b4b'), alt.value('#00cc96')), tooltip=['日期', '柱狀']), use_container_width=True)
+        with col_rsi:
+            df = pd.DataFrame({'日期': full_dates, 'RSI': rsi_vals}).drop_duplicates(subset=['日期'])
+            st.altair_chart(alt.Chart(df).mark_line(color='#9467bd').encode(x=x_axis_clean, y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None), tooltip=['日期', 'RSI']), use_container_width=True)
+
+        # 核心決策報告
         st.divider()
-        st.subheader("💡 核心量化決策報告")
+        st.subheader(f"💡 {display_label} 核心量化決策報告")
         
-        # 計算共振分 (日/週/月)
+        # 計算共振分
         h_d_up = hist[-1] > hist[-2]
-        _, _, h_w = perform_macd_full(wk_data['closes'], is_tw) if wk_data else (None, None, [0, 0])
-        _, _, h_m = perform_macd_full(mo_data['closes'], is_tw) if mo_data else (None, None, [0, 0])
-        h_w_up = h_w[-1] > h_w[-2] if len(h_w) > 1 else False
-        h_m_up = h_m[-1] > h_m[-2] if len(h_m) > 1 else False
+        _, _, h_w = perform_macd_full(wk_data['closes'], is_tw) if wk_data else (0,0,[0,0])
+        _, _, h_m = perform_macd_full(mo_data['closes'], is_tw) if mo_data else (0,0,[0,0])
+        resonance_score = sum([h_d_up, (h_w[-1]>h_w[-2]), (h_m[-1]>h_m[-2])])
         
-        resonance_score = sum([h_d_up, h_w_up, h_m_up])
-        score_info = {3: "🟢 3 分 (主升共振)", 2: "🟡 2 分 (趨勢修復)", 1: "🟠 1 分 (弱勢反彈)", 0: "🔴 0 分 (空頭排列)"}
-        
-        col_score, col_suggest = st.columns([1, 2])
-        with col_score:
-            st.metric("實時共振得分", score_info[resonance_score])
+        col_metrics, col_advice = st.columns([1, 2])
+        with col_metrics:
+            st.metric("當前成交價", f"${d_data['price']}")
             if cost_input > 0:
                 roi = (d_data['price'] - cost_input) / cost_input
                 st.metric("實時損益率", f"{roi:+.2%}")
-        
-        with col_suggest:
+            st.metric("共振得分", f"{resonance_score} 分")
+
+        with col_advice:
             curr_rsi = rsi_vals[-1]
             if cost_input > 0 and (d_data['price'] - cost_input) / cost_input < -0.07:
                 st.error("🛑 **建議：執行止損**。虧損已達 7% 紀律線，建議回收資金。")
             elif curr_rsi >= 80:
-                st.warning("🚨 **建議：逢高減碼**。RSI 已進入極度超買區，隨時面臨獲利了結賣壓。")
+                st.warning("🚨 **建議：逢高減碼**。RSI 已進入極度超買區。")
             elif resonance_score == 3 and curr_rsi < 80:
-                st.success("✅ **建議：持股續抱**。月、週、日三強共振，且尚未過熱，讓獲利奔跑。")
-            elif resonance_score == 0:
-                st.error("📉 **建議：嚴格觀望**。全週期動能向下，切勿隨意摸底接刀。")
+                st.success("✅ **建議：持股續抱**。全週期共振向上，讓獲利奔跑。")
             else:
-                st.info("🔎 **建議：區間操作**。動能分歧，建議依據成本價守好防線，觀望趨勢明朗。")
+                st.info("🔎 **建議：區間操作**。動能分歧，依據成本價守好防線。")
 
-        # --- 📖 顯示定義指南 (Expander) ---
-        with st.expander("📖 查看【共振得分定義與操作建議】參考手冊"):
-            st.markdown("""
-            ### 🎯 共振得分 (Resonance Score) 定義
-            * **🟢 3 分 (主升共振)**：月線、週線、日線動能同時向上。代表大趨勢與小趨勢同步，波段爆發力最強。
-            * **🟡 2 分 (趨勢修復)**：長週期與短週期動能出現分歧。通常處於震盪整理或多頭回測階段。
-            * **🟠 1 分 (弱勢反彈)**：僅單一週期動能轉強。大勢依然向下，易遇到假突破。
-            * **🔴 0 分 (空頭排列)**：所有週期動能皆向下。市場極度弱勢，建議嚴格迴避。
+        with st.expander("📖 查看【共振得分與 RSI 指南】"):
+            st.markdown("* **3 分**: 月/週/日全線向上 🟢\n* **0 分**: 全線向下 🔴\n* **RSI > 80**: 過熱 🚨\n* **RSI < 20**: 恐慌 ❄️")
 
-            ### 📈 RSI 位階指南
-            * **🔥 80 以上 (超買警戒)**：市場情緒極度狂熱，應考慮獲利了結，切忌追高。
-            * **📈 50~79 (多方控盤)**：買盤力道勝出，趨勢偏多運行。
-            * **📉 21~49 (空方壓制)**：賣盤力道勝出，趨勢偏空運行。
-            * **❄️ 20 以下 (超賣低接)**：市場出現恐慌拋售，可留意跌深反彈的契機。
-            """)
-
-        # --- 近 5 日軌跡表格 ---
-        st.subheader("📅 近 5 個交易日量化軌跡")
-        table_df = pd.DataFrame({'交易日期': full_dates, '收盤價': d_data['closes'], 'MACD柱狀': hist, 'RSI(14)': rsi_vals}).drop_duplicates(subset=['交易日期'], keep='last').tail(5)
+        st.subheader("📅 近 5 個交易日軌跡")
+        table_df = pd.DataFrame({'日期': full_dates, '收盤': d_data['closes'], 'MACD': hist, 'RSI': rsi_vals}).drop_duplicates(subset=['日期'], keep='last').tail(5)
         st.table(table_df)
     else:
-        st.error("❌ 無法抓取數據。")
+        st.error(f"❌ 無法抓取數據。請檢查「{stock_input}」是否輸入正確。")
