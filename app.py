@@ -32,6 +32,10 @@ def calculate_rsi(closes, period=14):
     rsi_series = [50.0] * period
     avg_gain = sum(max(0, closes[i] - closes[i-1]) for i in range(1, period+1)) / period
     avg_loss = sum(max(0, closes[i-1] - closes[i]) for i in range(1, period+1)) / period
+    
+    # 💡 修正：補回遺失的第一筆 RSI 計算值，確保陣列長度與日期完全一致
+    rsi_series.append(100.0 - (100.0 / (1.0 + (avg_gain / (avg_loss if avg_loss != 0 else 0.0001)))))
+    
     for i in range(period + 1, len(closes)):
         diff = closes[i] - closes[i-1]
         avg_gain = (avg_gain * (period - 1) + max(0, diff)) / period
@@ -40,12 +44,11 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：數據採集 (🎯 徹底解決日期重複問題)
+# 🌐 第二部分：數據採集
 # ==========================================
 @st.cache_data(ttl=10)
 def get_verified_data(ticker):
     headers = {'User-Agent': 'Mozilla/5.0'}
-    # 加入隨機參數防止 Yahoo 快取
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2y&_ts={int(time.time())}"
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
@@ -63,7 +66,6 @@ def get_verified_data(ticker):
                 c_h.append(float(raw_h[i]) if raw_h[i] else float(raw_c[i]))
                 c_l.append(float(raw_l[i]) if raw_l[i] else float(raw_c[i]))
 
-        # 💡 修正日期重複的核心邏輯
         tz_tw = timezone(timedelta(hours=8))
         now_tw = datetime.now(tz_tw)
         if live_price and c_ts:
@@ -71,11 +73,9 @@ def get_verified_data(ticker):
             last_k_date = datetime.fromtimestamp(c_ts[-1], tz=tz_tw).date()
             
             if today_date > last_k_date: 
-                # 只有當今天日期大於陣列最後日期時，才新增一列
                 c_ts.append(now_tw.timestamp()); c_c.append(live_price)
                 c_h.append(max(live_price, c_h[-1])); c_l.append(min(live_price, c_l[-1]))
             else:
-                # 否則只更新最後一筆的即時價格，不准新增
                 c_c[-1] = live_price
                 c_h[-1] = max(c_h[-1], live_price); c_l[-1] = min(c_l[-1], live_price)
 
@@ -84,7 +84,7 @@ def get_verified_data(ticker):
     except: return None
 
 # ==========================================
-# 🚀 第三部分：網頁介面 (新增產製時間標註)
+# 🚀 第三部分：網頁介面
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
 st.title("🌍 全球量化導航系統 (精確時間與年份版)")
@@ -94,13 +94,11 @@ stock_input = st.sidebar.text_input("輸入股票代碼 (例: 2330.TW)", value="
 cost_input = st.sidebar.number_input("持有成本 (0 代表觀望)", value=0.0)
 
 if stock_input:
-    # 紀錄產製時間
     tz_tw = timezone(timedelta(hours=8))
     report_time = datetime.now(tz_tw).strftime('%Y/%m/%d %H:%M:%S')
     
     d_data = get_verified_data(stock_input)
     if d_data:
-        # 💡 顯現日期跟時間：在報告最醒目的地方
         st.success(f"✅ 分析完成！報告產製時間：{report_time}")
         
         full_dates = [datetime.fromtimestamp(t, tz=tz_tw).strftime('%Y/%m/%d') for t in d_data['ts']]
@@ -125,7 +123,7 @@ if stock_input:
             rsi_df = pd.DataFrame({'日期': full_dates, 'RSI': rsi_vals}).drop_duplicates(subset=['日期']).set_index('日期')
             st.line_chart(rsi_df)
 
-        # --- 近 5 日軌跡 (強制去重並顯示年份) ---
+        # --- 近 5 日軌跡 ---
         st.subheader("📅 近 5 個交易日量化軌跡")
         table_df = pd.DataFrame({
             '交易日期': full_dates,
