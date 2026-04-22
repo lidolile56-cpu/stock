@@ -1,8 +1,9 @@
-# 檔名：20150422 MACD + RSI 終極通用型校準版.py
+# 檔名：20150422 MACD + RSI 終極無邊框圖表版.py
 import streamlit as st
 import requests
 import pandas as pd
 import time
+import altair as alt  # 💡 新增：專業圖表套件
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
@@ -43,7 +44,7 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：數據採集 (🎯 強固型容錯機制)
+# 🌐 第二部分：數據採集
 # ==========================================
 @st.cache_data(ttl=10)
 def get_verified_data(ticker):
@@ -51,7 +52,7 @@ def get_verified_data(ticker):
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2y&_ts={int(time.time())}"
     try:
         res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code != 200: return None # 找不到股票直接回傳空值，不報錯
+        if res.status_code != 200: return None
         
         json_data = res.json()
         if not json_data.get('chart', {}).get('result'): return None
@@ -88,32 +89,26 @@ def get_verified_data(ticker):
     except: return None
 
 # ==========================================
-# 🚀 第三部分：網頁介面
+# 🚀 第三部分：網頁介面與高階圖表渲染
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
-st.title("🌍 全球量化導航系統 (通用型雙引擎版)")
+st.title("🌍 全球量化導航系統 (通用高階圖表版)")
 
 st.sidebar.header("🔍 查詢設定")
 stock_input = st.sidebar.text_input("輸入股票代碼 (例: 2330, 3595, AAPL)", value="2330").strip().upper()
 cost_input = st.sidebar.number_input("持有成本 (0 代表觀望)", value=0.0)
 
 if stock_input:
-    # 💡 雙引擎自動尋標機制
-    tickers_to_try = []
-    if stock_input.isdigit():
-        tickers_to_try = [f"{stock_input}.TW", f"{stock_input}.TWO"]
-    else:
-        tickers_to_try = [stock_input]
+    tickers_to_try = [f"{stock_input}.TW", f"{stock_input}.TWO"] if stock_input.isdigit() else [stock_input]
 
     d_data = None
     final_ticker = ""
-    
     with st.spinner(f'正在多重資料庫中搜尋 {stock_input}，請稍候...'):
         for t in tickers_to_try:
             d_data = get_verified_data(t)
             if d_data:
                 final_ticker = t
-                break # 找到資料就立刻跳出迴圈
+                break
                 
     if d_data:
         tz_tw = timezone(timedelta(hours=8))
@@ -124,27 +119,60 @@ if stock_input:
         
         full_dates = [datetime.fromtimestamp(t, tz=tz_tw).strftime('%Y/%m/%d') for t in d_data['ts']]
         
-        # --- 走勢圖表與年份顯示 ---
-        st.subheader(f"📈 {d_data['name']} 收盤價走勢")
-        price_df = pd.DataFrame({'日期': full_dates, '收盤價': d_data['closes']}).drop_duplicates(subset=['日期']).set_index('日期')
-        st.line_chart(price_df)
+        # 💡 共通設定：隱藏 X 軸標籤與刻度的參數
+        x_axis_clean = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
 
-        # --- MACD 與 RSI 圖表 ---
+        # --- 1. 收盤價走勢圖 ---
+        st.subheader(f"📈 {d_data['name']} 收盤價走勢")
+        price_df = pd.DataFrame({'日期': full_dates, '收盤價': d_data['closes']}).drop_duplicates(subset=['日期'])
+        c_price = alt.Chart(price_df).mark_line(color='#1f77b4', strokeWidth=2).encode(
+            x=x_axis_clean,
+            y=alt.Y('收盤價', scale=alt.Scale(zero=False), title=None),
+            tooltip=['日期', '收盤價']
+        ).interactive()
+        st.altair_chart(c_price, use_container_width=True)
+
+        # 準備 MACD 與 RSI 數據
         dif, dea, hist = perform_macd_full(d_data['closes'], is_tw)
         rsi_vals = calculate_rsi(d_data['closes'])
         
         col1, col2 = st.columns(2)
+        
         with col1:
             st.subheader("📊 MACD 柱狀與曲線")
-            macd_df = pd.DataFrame({'日期': full_dates, 'DIF': dif, 'DEA': dea, '柱狀': hist}).drop_duplicates(subset=['日期']).set_index('日期')
-            st.line_chart(macd_df[['DIF', 'DEA']])
-            st.bar_chart(macd_df['柱狀'])
+            macd_df = pd.DataFrame({'日期': full_dates, 'DIF': dif, 'DEA': dea, '柱狀': hist}).drop_duplicates(subset=['日期'])
+            
+            # MACD 雙折線 (DIF, DEA)
+            macd_melted = macd_df[['日期', 'DIF', 'DEA']].melt('日期', var_name='指標', value_name='數值')
+            c_macd_lines = alt.Chart(macd_melted).mark_line().encode(
+                x=x_axis_clean,
+                y=alt.Y('數值', title=None),
+                color=alt.Color('指標', legend=alt.Legend(title=None, orient="top-left")),
+                tooltip=['日期', '指標', '數值']
+            )
+            
+            # MACD 柱狀圖 (紅綠分色)
+            c_macd_bar = alt.Chart(macd_df).mark_bar().encode(
+                x=x_axis_clean,
+                y=alt.Y('柱狀', title=None),
+                color=alt.condition(alt.datum['柱狀'] > 0, alt.value('#ff4b4b'), alt.value('#00cc96')), # 正紅負綠
+                tooltip=['日期', '柱狀']
+            )
+            
+            # 將折線與柱狀圖疊加
+            st.altair_chart(c_macd_bar + c_macd_lines, use_container_width=True)
+
         with col2:
             st.subheader("📉 RSI (14) 走勢")
-            rsi_df = pd.DataFrame({'日期': full_dates, 'RSI': rsi_vals}).drop_duplicates(subset=['日期']).set_index('日期')
-            st.line_chart(rsi_df)
+            rsi_df = pd.DataFrame({'日期': full_dates, 'RSI': rsi_vals}).drop_duplicates(subset=['日期'])
+            c_rsi = alt.Chart(rsi_df).mark_line(color='#9467bd', strokeWidth=2).encode(
+                x=x_axis_clean,
+                y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None),
+                tooltip=['日期', 'RSI']
+            ).interactive()
+            st.altair_chart(c_rsi, use_container_width=True)
 
-        # --- 近 5 日軌跡 ---
+        # --- 近 5 日軌跡 (保留完整日期) ---
         st.subheader("📅 近 5 個交易日量化軌跡")
         table_df = pd.DataFrame({
             '交易日期': full_dates,
@@ -158,4 +186,4 @@ if stock_input:
             roi = (d_data['price'] - cost_input) / cost_input
             st.info(f"💰 持有成本：{cost_input} ｜ 📊 實時損益：**{roi:+.2%}** (更新至 {report_time})")
     else:
-        st.error(f"❌ 無法抓取數據。請檢查代碼「{stock_input}」是否存在。若是特殊標的，可嘗試手動加入後綴 (如 .TW, .TWO)。")
+        st.error(f"❌ 無法抓取數據。請檢查代碼「{stock_input}」是否存在。")
