@@ -1,4 +1,4 @@
-# 檔名：20150422 MACD + RSI 完整說明版.py
+# 檔名：20150422 MACD + RSI 終極校準版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -40,11 +40,12 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：數據採集 (🎯 精確去重與年份格式化)
+# 🌐 第二部分：數據採集 (🎯 徹底解決日期重複問題)
 # ==========================================
 @st.cache_data(ttl=10)
 def get_verified_data(ticker):
     headers = {'User-Agent': 'Mozilla/5.0'}
+    # 加入隨機參數防止 Yahoo 快取
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2y&_ts={int(time.time())}"
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
@@ -62,17 +63,19 @@ def get_verified_data(ticker):
                 c_h.append(float(raw_h[i]) if raw_h[i] else float(raw_c[i]))
                 c_l.append(float(raw_l[i]) if raw_l[i] else float(raw_c[i]))
 
-        # 💡 精確對位邏輯：檢查最後日期，決定是「新增」還是「覆蓋」
+        # 💡 修正日期重複的核心邏輯
         tz_tw = timezone(timedelta(hours=8))
         now_tw = datetime.now(tz_tw)
         if live_price and c_ts:
             today_date = now_tw.date()
-            last_date = datetime.fromtimestamp(c_ts[-1], tz=tz_tw).date()
+            last_k_date = datetime.fromtimestamp(c_ts[-1], tz=tz_tw).date()
             
-            if today_date > last_date: # 今天還沒在陣列裡 -> 新增
+            if today_date > last_k_date: 
+                # 只有當今天日期大於陣列最後日期時，才新增一列
                 c_ts.append(now_tw.timestamp()); c_c.append(live_price)
                 c_h.append(max(live_price, c_h[-1])); c_l.append(min(live_price, c_l[-1]))
-            else: # 今天已經在陣列裡 -> 覆蓋最後一筆確保即時
+            else:
+                # 否則只更新最後一筆的即時價格，不准新增
                 c_c[-1] = live_price
                 c_h[-1] = max(c_h[-1], live_price); c_l[-1] = min(c_l[-1], live_price)
 
@@ -81,55 +84,59 @@ def get_verified_data(ticker):
     except: return None
 
 # ==========================================
-# 🚀 第三部分：網頁介面 (收盤價/MACD/RSI 圖表)
+# 🚀 第三部分：網頁介面 (新增產製時間標註)
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
-st.title("🌍 全球量化導航系統 (年份與去重修正版)")
+st.title("🌍 全球量化導航系統 (精確時間與年份版)")
 
 st.sidebar.header("🔍 查詢設定")
-stock_input = st.sidebar.text_input("輸入代碼 (例: 2330.TW)", value="2330.TW").upper()
+stock_input = st.sidebar.text_input("輸入股票代碼 (例: 2330.TW)", value="2330.TW").upper()
+cost_input = st.sidebar.number_input("持有成本 (0 代表觀望)", value=0.0)
 
 if stock_input:
+    # 紀錄產製時間
+    tz_tw = timezone(timedelta(hours=8))
+    report_time = datetime.now(tz_tw).strftime('%Y/%m/%d %H:%M:%S')
+    
     d_data = get_verified_data(stock_input)
     if d_data:
-        tz_tw = timezone(timedelta(hours=8))
-        # 💡 強制建立包含年份的 YYYY/MM/DD 字串索引
+        # 💡 顯現日期跟時間：在報告最醒目的地方
+        st.success(f"✅ 分析完成！報告產製時間：{report_time}")
+        
         full_dates = [datetime.fromtimestamp(t, tz=tz_tw).strftime('%Y/%m/%d') for t in d_data['ts']]
         
-        # 建立主 DataFrame 並確保日期去重
-        main_df = pd.DataFrame({'日期': full_dates, '收盤價': d_data['closes']})
-        main_df = main_df.drop_duplicates(subset=['日期'], keep='last').set_index('日期')
+        # --- 走勢圖表與年份顯示 ---
+        st.subheader("📈 收盤價走勢 (包含年份)")
+        price_df = pd.DataFrame({'日期': full_dates, '收盤價': d_data['closes']}).drop_duplicates(subset=['日期']).set_index('日期')
+        st.line_chart(price_df)
 
-        # --- 1. 收盤價走勢 ---
-        st.subheader("📈 收盤價趨勢 (含年份)")
-        st.line_chart(main_df['收盤價'])
-
-        # --- 2. MACD 指標圖 ---
+        # --- MACD 與 RSI 圖表 ---
         dif, dea, hist = perform_macd_full(d_data['closes'], ".TW" in stock_input)
-        if dif:
-            st.subheader("📊 MACD (DIF / DEA / 柱狀)")
-            macd_df = pd.DataFrame({'日期': full_dates, 'DIF': dif, 'DEA': dea, '柱狀值': hist})
-            macd_df = macd_df.drop_duplicates(subset=['日期'], keep='last').set_index('日期')
-            st.line_chart(macd_df[['DIF', 'DEA']])
-            st.bar_chart(macd_df['柱狀值'])
-
-        # --- 3. RSI 指標圖 ---
         rsi_vals = calculate_rsi(d_data['closes'])
-        st.subheader("📉 RSI (14) 走勢")
-        rsi_df = pd.DataFrame({'日期': full_dates, 'RSI': rsi_vals})
-        rsi_df = rsi_df.drop_duplicates(subset=['日期'], keep='last').set_index('日期')
-        st.line_chart(rsi_df)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("📊 MACD 柱狀與曲線")
+            macd_df = pd.DataFrame({'日期': full_dates, 'DIF': dif, 'DEA': dea, '柱狀': hist}).drop_duplicates(subset=['日期']).set_index('日期')
+            st.line_chart(macd_df[['DIF', 'DEA']])
+            st.bar_chart(macd_df['柱狀'])
+        with col2:
+            st.subheader("📉 RSI (14) 走勢")
+            rsi_df = pd.DataFrame({'日期': full_dates, 'RSI': rsi_vals}).drop_duplicates(subset=['日期']).set_index('日期')
+            st.line_chart(rsi_df)
 
-        # --- 4. 結果分析表格 (精確 5 日) ---
-        st.subheader("📅 近 5 個交易日量化軌跡 (精確年份對位)")
-        # 重新計算 MACD/RSI 狀態以確保與表格同步
+        # --- 近 5 日軌跡 (強制去重並顯示年份) ---
+        st.subheader("📅 近 5 個交易日量化軌跡")
         table_df = pd.DataFrame({
             '交易日期': full_dates,
             '收盤價': d_data['closes'],
-            'MACD柱狀': hist if hist else [0]*len(full_dates),
+            'MACD柱狀': hist,
             'RSI(14)': rsi_vals
         }).drop_duplicates(subset=['交易日期'], keep='last').tail(5)
-        
         st.table(table_df)
+
+        if cost_input > 0:
+            roi = (d_data['price'] - cost_input) / cost_input
+            st.info(f"💰 持有成本：{cost_input} ｜ 📊 實時損益：**{roi:+.2%}** (更新至 {report_time})")
     else:
-        st.error("抓取失敗，請確認代碼。")
+        st.error("❌ 無法抓取數據。請檢查代碼格式。")
