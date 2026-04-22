@@ -1,4 +1,4 @@
-# 檔名：20150422 MACD + RSI 台股全市場完美對位版.py
+# 檔名：20150422 MACD + RSI 台股全市場活體對位版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -43,21 +43,16 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：全市場解譯與空殼過濾引擎
+# 🌐 第二部分：全市場解譯與活體過濾引擎
 # ==========================================
 def search_ticker(query):
     """強效中英雙向搜尋引擎 (自帶精確後綴)"""
     common_stocks = {
-        # 上市 (TW)
         "台積電": "2330.TW", "鴻海": "2317.TW", "聯發科": "2454.TW", "廣達": "2382.TW",
-        "長榮": "2603.TW", "陽明": "2609.TW", "萬海": "2615.TW", "聯電": "2303.TW",
-        "大立光": "3008.TW", "緯創": "3231.TW", "富邦金": "2881.TW", "星宇航空": "2646.TW",
-        # 上櫃 (TWO)
+        "長榮": "2603.TW", "陽明": "2609.TW", "聯電": "2303.TW", "緯創": "3231.TW",
         "元太": "8069.TWO", "鈊象": "3293.TWO", "環球晶": "6488.TWO", "群聯": "8299.TWO", 
-        "世界": "5347.TWO", "譜瑞": "4966.TWO", "信驊": "5274.TWO", "力旺": "3529.TWO",
-        "穩懋": "3105.TWO", "雙鴻": "3324.TWO", "中美晶": "5483.TWO", "連展投控": "3710.TWO",
-        # 興櫃 (TE)
-        "乾杯": "1269.TE"
+        "世界": "5347.TWO", "穩懋": "3105.TWO", "雙鴻": "3324.TWO", "中美晶": "5483.TWO",
+        "乾杯": "1269.TE", "星宇航空": "2646.TW" 
     }
     for name, symbol in common_stocks.items():
         if name in query:
@@ -71,7 +66,7 @@ def search_ticker(query):
         res = requests.get(search_url, headers=headers, params=params, timeout=5).json()
         quotes = res.get('quotes', [])
         
-        # 優先篩選出台股 (.TW 或 .TWO 或 .TE)
+        # 尋找包含台股後綴的標的
         for q in quotes:
             sym = q.get('symbol', '')
             if sym.endswith('.TW') or sym.endswith('.TWO') or sym.endswith('.TE'):
@@ -99,10 +94,18 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
         live_price = meta.get('regularMarketPrice')
         ts = result.get('timestamp', [])
         
-        # 💡 核心修復：拒絕空殼資料！如果 K 線陣列沒有資料，直接判定為無效市場並退回
         if not ts or len(ts) < 5: 
             return None 
             
+        # 💡 核心修復：【活體數據檢測】
+        tz_tw = timezone(timedelta(hours=8))
+        last_trade_date = datetime.fromtimestamp(ts[-1], tz=tz_tw)
+        now_tw = datetime.now(tz_tw)
+        
+        # 如果最後交易日是 14 天前，這 100% 是 Yahoo 亂給的殭屍/下市/錯誤市場空殼，直接丟棄！
+        if (now_tw - last_trade_date).days > 14:
+            return None
+
         quote = result.get('indicators', {}).get('quote', [{}])[0]
         raw_c, raw_h, raw_l = quote.get('close', []), quote.get('high', []), quote.get('low', [])
         
@@ -113,12 +116,8 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
                 c_h.append(float(raw_h[i]) if raw_h[i] else float(raw_c[i]))
                 c_l.append(float(raw_l[i]) if raw_l[i] else float(raw_c[i]))
 
-        tz_tw = timezone(timedelta(hours=8))
-        now_tw = datetime.now(tz_tw)
         if interval == "1d" and live_price and c_ts:
-            today_date = now_tw.date()
-            last_k_date = datetime.fromtimestamp(c_ts[-1], tz=tz_tw).date()
-            if today_date > last_k_date: 
+            if now_tw.date() > datetime.fromtimestamp(c_ts[-1], tz=tz_tw).date():
                 c_ts.append(now_tw.timestamp()); c_c.append(live_price)
                 c_h.append(max(live_price, c_h[-1])); c_l.append(min(live_price, c_l[-1]))
             else:
@@ -133,17 +132,17 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
 # 🚀 第三部分：網頁介面
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
-st.title("🌍 全球量化導航系統 (台股全市場完美對位版)")
+st.title("🌍 全球量化導航系統 (全市場活體對位版)")
 
 st.sidebar.header("🔍 查詢設定")
-stock_input = st.sidebar.text_input("輸入名稱或代碼 (例: 鈊象, 乾杯, AAPL)", value="鈊象").strip()
+stock_input = st.sidebar.text_input("輸入名稱或代碼 (例: 光洋科, 原相, 乾杯)", value="鈊象").strip()
 cost_input = st.sidebar.number_input("持有成本 (0 代表觀望)", value=0.0)
 
 if stock_input:
     d_data, wk_data, mo_data = None, None, None
     found_symbol, display_name = None, None
 
-    with st.spinner(f'正在解譯中文並避開空殼資料，請稍候...'):
+    with st.spinner(f'正在解譯中文並過濾殭屍數據，請稍候...'):
         if re.search(r'[\u4e00-\u9fff]', stock_input):
             found_symbol, display_name = search_ticker(stock_input)
         else:
@@ -155,19 +154,19 @@ if stock_input:
             base_symbol = found_symbol.split('.')[0]
 
             if base_symbol.isdigit():
-                # 💡 如果 API 或字典已提供了特定後綴，優先嘗試
+                # 💡 智慧排序：優先嘗試 Yahoo 建議的後綴，失敗後立刻嘗試其他市場
                 if '.' in found_symbol:
                     tickers_to_try.append(found_symbol)
-                # 接著將 TW, TWO, TE 全都加入後補名單 (暴力掃描)
                 for sfx in ['.TW', '.TWO', '.TE']:
-                    if f"{base_symbol}{sfx}" not in tickers_to_try:
-                        tickers_to_try.append(f"{base_symbol}{sfx}")
+                    candidate = f"{base_symbol}{sfx}"
+                    if candidate not in tickers_to_try:
+                        tickers_to_try.append(candidate)
             else:
-                tickers_to_try = [found_symbol] # 美股
+                tickers_to_try = [found_symbol] 
             
             for t in tickers_to_try:
-                # 只要抓到有效的 d_data (非空殼)，就會立刻停止嘗試
                 d_data = get_verified_data(t, "1d", "2y")
+                # 只要抓到通過「活體檢測」的資料，立刻跳出迴圈
                 if d_data:
                     wk_data = get_verified_data(t, "1wk", "max")
                     mo_data = get_verified_data(t, "1mo", "max")
@@ -239,4 +238,4 @@ if stock_input:
         table_df = pd.DataFrame({'交易日期': full_dates, '收盤價': d_data['closes'], 'MACD柱狀': [round(x,3) for x in hist], 'RSI(14)': [round(x,1) for x in rsi_vals]}).drop_duplicates(subset=['交易日期'], keep='last').tail(5)
         st.table(table_df)
     else:
-        st.error(f"❌ 無法透過「{stock_input}」抓取有效數據。請確認名稱或代碼是否正確。")
+        st.error(f"❌ 無法透過「{stock_input}」抓取有效數據。建議確認名稱是否正確，或直接輸入股號 (例如: 3293)。")
