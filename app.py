@@ -1,11 +1,10 @@
-# 檔名：20150422 MACD + RSI 終極完美對位版.py
+# 檔名：20150422 MACD + RSI 台股全市場對位版.py
 import streamlit as st
 import requests
 import pandas as pd
 import time
 import altair as alt
 import re
-import urllib.parse
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
@@ -26,6 +25,7 @@ def perform_macd_full(closes, is_tw):
     e26 = calculate_ema(closes, 26)
     dif = [a - b for a, b in zip(e12, e26)]
     dea = calculate_ema(dif, 9)
+    # 台股市場 (TW/TWO/TE) 放大的乘數
     multiplier = 2.0 if is_tw else 1.0
     hist = [(d - a) * multiplier for d, a in zip(dif, dea)]
     return dif, dea, hist
@@ -44,24 +44,26 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：混合式搜尋引擎與數據採集
+# 🌐 第二部分：全市場搜尋引擎與數據採集
 # ==========================================
 def search_ticker(query):
-    """強效中英雙向搜尋引擎"""
-    # 1. 內建極速字典 (涵蓋熱門股，確保秒查)
+    """支援 上市/上櫃/興櫃 的中英雙向搜尋引擎"""
+    # 1. 內建極速字典 (擴增熱門上櫃股)
     common_stocks = {
+        # 上市熱門
         "台積電": "2330.TW", "鴻海": "2317.TW", "聯發科": "2454.TW", "廣達": "2382.TW",
         "富邦金": "2881.TW", "國泰金": "2882.TW", "台達電": "2308.TW", "中華電": "2412.TW",
-        "日月光": "3711.TW", "中信金": "2891.TW", "長榮": "2603.TW", "陽明": "2609.TW",
-        "萬海": "2615.TW", "聯電": "2303.TW", "大立光": "3008.TW", "緯創": "3231.TW",
-        "智邦": "2345.TW", "世芯": "3661.TW", "緯穎": "6669.TW", "元大金": "2885.TW",
-        "兆豐金": "2886.TW", "聯詠": "3034.TW", "瑞昱": "2379.TW", "光寶科": "2301.TW"
+        "長榮": "2603.TW", "聯電": "2303.TW", "大立光": "3008.TW", "緯創": "3231.TW",
+        # 上櫃熱門 (OTC)
+        "元太": "8069.TWO", "鈊象": "3293.TWO", "環球晶": "6488.TWO", "群聯": "8299.TWO", 
+        "世界": "5347.TWO", "譜瑞": "4966.TWO", "信驊": "5274.TWO", "力旺": "3529.TWO",
+        "穩懋": "3105.TWO", "雙鴻": "3324.TWO", "中美晶": "5483.TWO"
     }
     for name, symbol in common_stocks.items():
         if name in query:
             return symbol, name
 
-    # 2. Yahoo API 安全編碼搜尋 (處理字典外的冷門股)
+    # 2. Yahoo API 搜尋 (全面開放 .TW, .TWO, .TE)
     headers = {'User-Agent': 'Mozilla/5.0'}
     search_url = "https://query2.finance.yahoo.com/v1/finance/search"
     params = {'q': query, 'lang': 'zh-Hant-TW', 'region': 'TW', 'quotesCount': 5}
@@ -70,13 +72,12 @@ def search_ticker(query):
         res = requests.get(search_url, headers=headers, params=params, timeout=5).json()
         quotes = res.get('quotes', [])
         
-        # 優先篩選出台股 (.TW 或 .TWO)
+        # 優先過濾出 上市(TW) / 上櫃(TWO) / 興櫃(TE)
         for q in quotes:
             sym = q.get('symbol', '')
-            if '.TW' in sym or '.TWO' in sym:
+            if sym.endswith('.TW') or sym.endswith('.TWO') or sym.endswith('.TE'):
                 return sym, q.get('longname') or q.get('shortname') or query
                 
-        # 若找不到台股，則回傳第一個匹配的標的 (例如美股)
         if quotes:
             return quotes[0].get('symbol'), quotes[0].get('longname') or quotes[0].get('shortname') or query
     except: pass
@@ -115,18 +116,17 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
 # 🚀 第三部分：網頁介面與決策引擎
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
-st.title("🌍 全球量化導航系統 (中英智能連結版)")
+st.title("🌍 全球量化導航系統 (台股全市場版)")
 
 st.sidebar.header("🔍 查詢設定")
-stock_input = st.sidebar.text_input("輸入名稱或代碼 (例: 鴻海, 2330, NVDA)", value="台積電").strip()
+stock_input = st.sidebar.text_input("輸入名稱或代碼 (例: 鈊象, 3595, AAPL)", value="台積電").strip()
 cost_input = st.sidebar.number_input("持有成本 (0 代表觀望)", value=0.0)
 
 if stock_input:
     d_data, wk_data, mo_data = None, None, None
     found_symbol, display_name = None, None
 
-    with st.spinner(f'正在搜尋並對位「{stock_input}」的雲端數據...'):
-        # 智能判斷：包含中文就走搜尋，否則視為純代碼
+    with st.spinner(f'正在進行全市場搜尋 (上市/上櫃/興櫃)...'):
         if re.search(r'[\u4e00-\u9fff]', stock_input):
             found_symbol, display_name = search_ticker(stock_input)
         else:
@@ -135,22 +135,24 @@ if stock_input:
 
         if found_symbol:
             tickers_to_try = [found_symbol]
-            if found_symbol.isdigit(): # 若為純數字則自動加上台股後綴
-                tickers_to_try = [f"{found_symbol}.TW", f"{found_symbol}.TWO"]
+            # 💡 擴展到三市場尋標引擎
+            if found_symbol.isdigit(): 
+                tickers_to_try = [f"{found_symbol}.TW", f"{found_symbol}.TWO", f"{found_symbol}.TE"]
             
             for t in tickers_to_try:
                 d_data = get_verified_data(t, "1d", "2y")
                 if d_data:
                     wk_data = get_verified_data(t, "1wk", "max")
                     mo_data = get_verified_data(t, "1mo", "max")
-                    break
+                    break # 找到對應市場，立刻跳出迴圈
 
     if d_data:
         tz_tw = timezone(timedelta(hours=8))
         report_time = datetime.now(tz_tw).strftime('%Y/%m/%d %H:%M:%S')
-        is_tw = ".TW" in d_data['symbol'] or ".TWO" in d_data['symbol']
         
-        # 💡 強制組合最佳顯示名稱 (中文優先)
+        # 判斷是否為台股 (包含興櫃 TE)
+        is_tw = d_data['symbol'].endswith('.TW') or d_data['symbol'].endswith('.TWO') or d_data['symbol'].endswith('.TE')
+        
         final_name = display_name if re.search(r'[\u4e00-\u9fff]', display_name) else d_data['name']
         display_label = f"{final_name} ({d_data['symbol']})"
         
