@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 終極完美觸控版.py
+# 檔名：20150424 MACD + RSI 莫蘭迪美學觸控版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -204,22 +204,24 @@ if stock_input:
         }).drop_duplicates(subset=['日期'])
 
         # ==========================================
-        # 💡 行動優化：全域觸控聯動與高對比標籤
+        # 💡 行動優化：全域觸控聯動與【莫蘭迪黃色】標籤
         # ==========================================
         nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
         x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
+        
+        # 定義莫蘭迪黃色
+        morandi_yellow = '#CBAE73'
 
-        # 💡 隱形觸控層：三張圖共用，觸摸任何一張圖都會觸發 nearest
+        # 隱形觸控層與十字線
         selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
         rules = alt.Chart(source).mark_rule(color='gray', strokeDash=[3,3]).encode(x=x_axis).transform_filter(nearest)
 
         # 1. 價格圖
         line_price = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False), title=None))
         points_price = line_price.mark_point(color='#1f77b4', size=60, filled=True).encode(opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
-        # 移除了強制上色，讓文字自動對比背景 (黑或白)
-        text_date_p = line_price.mark_text(align='left', dx=10, dy=-15, fontSize=12, fontWeight='bold').encode(text='日期:N').transform_filter(nearest)
-        text_price = line_price.mark_text(align='left', dx=10, dy=5, fontSize=14, fontWeight='bold').encode(text=alt.Text('收盤價:Q', format='.2f')).transform_filter(nearest)
-        # 加入 selectors 啟動這張圖的觸控
+        # 套用莫蘭迪黃色
+        text_date_p = line_price.mark_text(align='left', dx=10, dy=-15, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(text='日期:N').transform_filter(nearest)
+        text_price = line_price.mark_text(align='left', dx=10, dy=5, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('收盤價:Q', format='.2f')).transform_filter(nearest)
         c_price = (line_price + selectors + rules + points_price + text_date_p + text_price).properties(height=200, title="股價走勢")
 
         # 2. MACD 柱狀圖
@@ -227,17 +229,17 @@ if stock_input:
             x=x_axis, y=alt.Y('MACD柱狀', title=None),
             color=alt.condition(alt.datum['MACD柱狀'] > 0, alt.value('#ff4b4b'), alt.value('#00cc96'))
         )
-        text_date_m = alt.Chart(source).mark_text(align='left', dx=10, dy=-15, fontSize=12, fontWeight='bold').encode(x=x_axis, y=alt.Y('MACD柱狀'), text='日期:N').transform_filter(nearest)
-        text_macd = alt.Chart(source).mark_text(align='left', dx=10, dy=5, fontSize=14, fontWeight='bold').encode(x=x_axis, y=alt.Y('MACD柱狀'), text=alt.Text('MACD柱狀:Q', format='.3f')).transform_filter(nearest)
-        # 加入 selectors 啟動這張圖的觸控
+        # 套用莫蘭迪黃色
+        text_date_m = alt.Chart(source).mark_text(align='left', dx=10, dy=-15, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(x=x_axis, y=alt.Y('MACD柱狀'), text='日期:N').transform_filter(nearest)
+        text_macd = alt.Chart(source).mark_text(align='left', dx=10, dy=5, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(x=x_axis, y=alt.Y('MACD柱狀'), text=alt.Text('MACD柱狀:Q', format='.3f')).transform_filter(nearest)
         c_macd = (bar_macd + selectors + rules + text_date_m + text_macd).properties(height=150, title="MACD 動能")
 
         # 3. RSI 圖
         line_rsi = alt.Chart(source).mark_line(color='#9467bd', strokeWidth=2).encode(x=x_axis, y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None))
         points_rsi = line_rsi.mark_point(color='#9467bd', size=60, filled=True).encode(opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
-        text_date_r = line_rsi.mark_text(align='left', dx=10, dy=-15, fontSize=12, fontWeight='bold').encode(text='日期:N').transform_filter(nearest)
-        text_rsi = line_rsi.mark_text(align='left', dx=10, dy=5, fontSize=14, fontWeight='bold').encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
-        # 加入 selectors 啟動這張圖的觸控
+        # 套用莫蘭迪黃色
+        text_date_r = line_rsi.mark_text(align='left', dx=10, dy=-15, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(text='日期:N').transform_filter(nearest)
+        text_rsi = line_rsi.mark_text(align='left', dx=10, dy=5, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
         c_rsi = (line_rsi + selectors + rules + points_rsi + text_date_r + text_rsi).properties(height=150, title="RSI (14)")
 
         # 顯示同步圖表
