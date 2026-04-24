@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 莫蘭迪觸控版 (左右安全邊距優化).py
+# 檔名：20150424 MACD + RSI 莫蘭迪觸控版 (寬闊安全邊界優化).py
 import streamlit as st
 import requests
 import pandas as pd
@@ -9,17 +9,18 @@ import urllib.parse
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
-# 🚀 網頁基本設定與 CSS 邊界優化
+# 🚀 網頁基本設定與 CSS 寬闊邊界優化
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
 
-# 💡 核心優化：強制增加左右邊距，避免貼齊螢幕邊緣造成誤觸
+# 💡 核心優化：將邊距加大至 10%，創造更舒適的防誤觸空間與留白感
 st.markdown("""
     <style>
     .block-container {
-        padding-left: 6% !important;
-        padding-right: 6% !important;
-        max-width: 1400px; /* 限制電腦版最大寬度，避免過度拉伸 */
+        padding-top: 2rem !important; 
+        padding-left: 10% !important; /* 從 6% 加大到 10% */
+        padding-right: 10% !important; /* 從 6% 加大到 10% */
+        max-width: 1200px; /* 適度限縮最大寬度，讓大螢幕閱讀更集中 */
     }
     </style>
 """, unsafe_allow_html=True)
@@ -219,10 +220,11 @@ if stock_input:
         }).drop_duplicates(subset=['日期'])
 
         # ==========================================
-        # 💡 圖表與觸控渲染
+        # 💡 行動優化：左斜上方顯示 + 莫蘭迪黃色
         # ==========================================
         nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
         x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
+        
         morandi_yellow = '#CBAE73'
 
         selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
