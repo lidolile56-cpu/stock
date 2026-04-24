@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 莫蘭迪觸控版 (寬闊安全邊界優化).py
+# 檔名：20150424 MACD + RSI 莫蘭迪觸控版 (非對稱版面優化).py
 import streamlit as st
 import requests
 import pandas as pd
@@ -9,18 +9,18 @@ import urllib.parse
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
-# 🚀 網頁基本設定與 CSS 寬闊邊界優化
+# 🚀 網頁基本設定與 CSS 非對稱邊界優化
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
 
-# 💡 核心優化：將邊距加大至 10%，創造更舒適的防誤觸空間與留白感
+# 💡 核心優化：非對稱邊距 (左邊極小，右邊極大)
 st.markdown("""
     <style>
     .block-container {
         padding-top: 2rem !important; 
-        padding-left: 10% !important; /* 從 6% 加大到 10% */
-        padding-right: 10% !important; /* 從 6% 加大到 10% */
-        max-width: 1200px; /* 適度限縮最大寬度，讓大螢幕閱讀更集中 */
+        padding-left: 2% !important;  /* 左邊間距小，貼近邊緣 */
+        padding-right: 15% !important; /* 右邊間距大，留出寬闊防誤觸區 */
+        max-width: 1200px;
     }
     </style>
 """, unsafe_allow_html=True)
