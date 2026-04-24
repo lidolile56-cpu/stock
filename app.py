@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 終極完美版 (國內 Yahoo 財報引擎修復).py
+# 檔名：20150424 MACD + RSI 終極無阻擋版 (FinMind 財報引擎).py
 import streamlit as st
 import requests
 import pandas as pd
@@ -138,49 +138,68 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
         return {'closes': c_c, 'ts': c_ts, 'price': live_price, 'name': official_name, 'symbol': meta.get('symbol')}
     except: return None
 
-# 💡 核心修復：獨立並行抓取國內 Yahoo API，互不干擾
+# 💡 終極核心修復：FinMind 台灣開源資料庫直連
 @st.cache_data(ttl=3600)
 def get_revenue_info(symbol):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    result_data = {'total_revenue': '無資料', 'revenue_growth': '無資料', 'gross_margin': '無資料', 'profit_margin': '無資料'}
     
-    result_data = {
-        'total_revenue': '無資料',
-        'revenue_growth': '無資料',
-        'gross_margin': '無資料',
-        'profit_margin': '無資料'
-    }
-    
-    # 1. 獨立抓取：單月營收 (Revenues)
-    try:
-        r_url = f"https://tw.stock.yahoo.com/_td-stock/api/resource/StockServices.revenues;symbol={symbol}"
-        r_res = requests.get(r_url, headers=headers, timeout=5)
-        if r_res.status_code == 200:
-            r_list = r_res.json().get('ResultSet', {}).get('Result', [])
-            if r_list:
-                latest_rev = r_list[0]
-                if latest_rev.get('Revenue'):
-                    rev_yi = float(latest_rev.get('Revenue')) / 100000 # 換算為億
-                    result_data['total_revenue'] = f"{rev_yi:,.2f} 億 ({latest_rev.get('Date', '')})"
-                if latest_rev.get('YoY'):
-                    result_data['revenue_growth'] = f"{latest_rev.get('YoY')}%"
-    except: pass
+    pure_symbol = symbol.split('.')[0]
+    is_tw = symbol.endswith('.TW') or symbol.endswith('.TWO') or symbol.endswith('.TE')
 
-    # 2. 獨立抓取：三率 (Margins)
-    try:
-        m_url = f"https://tw.stock.yahoo.com/_td-stock/api/resource/StockServices.margins;symbol={symbol}"
-        m_res = requests.get(m_url, headers=headers, timeout=5)
-        if m_res.status_code == 200:
-            m_list = m_res.json().get('ResultSet', {}).get('Result', [])
-            if m_list:
-                latest_margin = m_list[0]
-                if latest_margin.get('GrossMargin'):
-                    result_data['gross_margin'] = f"{latest_margin.get('GrossMargin')}%"
-                if latest_margin.get('NetIncomeMargin'):
-                    result_data['profit_margin'] = f"{latest_margin.get('NetIncomeMargin')}%"
-    except: pass
+    # 引擎 A：FinMind 開放資料庫 (專治台灣股票)
+    if is_tw:
+        try:
+            # 1. 抓取營收
+            start_date_rev = (datetime.now(timezone.utc) - timedelta(days=120)).strftime('%Y-%m-%d')
+            url_rev = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={pure_symbol}&start_date={start_date_rev}"
+            res_rev = requests.get(url_rev, headers=headers, timeout=5).json()
+            if res_rev.get('data'):
+                latest_rev = res_rev['data'][-1] # 取最新一筆
+                rev_val = latest_rev.get('revenue', 0)
+                yoy = latest_rev.get('revenue_YearOnYearRatio')
+                if rev_val:
+                    rev_yi = rev_val / 100000000 # 轉為億
+                    result_data['total_revenue'] = f"{rev_yi:,.2f} 億 ({latest_rev.get('revenue_month')}月)"
+                if yoy is not None:
+                    result_data['revenue_growth'] = f"{yoy:.2f}%"
+
+            # 2. 抓取財報三率
+            start_date_fin = (datetime.now(timezone.utc) - timedelta(days=400)).strftime('%Y-%m-%d')
+            url_fin = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={pure_symbol}&start_date={start_date_fin}"
+            res_fin = requests.get(url_fin, headers=headers, timeout=5).json()
+            if res_fin.get('data'):
+                df_fin = pd.DataFrame(res_fin['data'])
+                latest_date = df_fin['date'].max()
+                df_latest = df_fin[df_fin['date'] == latest_date]
+                
+                # 毛利率
+                gross = df_latest[df_latest['type'].str.contains('GrossProfitMargin', case=False, na=False)]
+                if not gross.empty: result_data['gross_margin'] = f"{gross['value'].values[0]:.2f}%"
+                
+                # 淨利率
+                net = df_latest[df_latest['type'].str.contains('NetIncomeMargin|NetProfitMargin', case=False, na=False)]
+                if not net.empty: result_data['profit_margin'] = f"{net['value'].values[0]:.2f}%"
+        except: pass
+
+    # 引擎 B：Yahoo US 穿透技術 (用於美股或備援)
+    if result_data['total_revenue'] == '無資料' or not is_tw:
+        try:
+            session = requests.Session()
+            session.headers.update(headers)
+            session.get('https://fc.yahoo.com', timeout=5) 
+            crumb = session.get('https://query1.finance.yahoo.com/v1/test/getcrumb', timeout=5).text
+            if crumb:
+                url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=financialData&crumb={crumb}"
+                res = session.get(url, timeout=5)
+                if res.status_code == 200:
+                    fin = res.json().get('quoteSummary', {}).get('result', [{}])[0].get('financialData', {})
+                    if fin:
+                        if result_data['total_revenue'] == '無資料': result_data['total_revenue'] = fin.get('totalRevenue', {}).get('fmt', '無資料')
+                        if result_data['revenue_growth'] == '無資料': result_data['revenue_growth'] = f"{fin.get('revenueGrowth', {}).get('raw', 0)*100:.2f}%" if fin.get('revenueGrowth', {}).get('raw') else "無資料"
+                        if result_data['gross_margin'] == '無資料': result_data['gross_margin'] = f"{fin.get('grossMargins', {}).get('raw', 0)*100:.2f}%" if fin.get('grossMargins', {}).get('raw') else "無資料"
+                        if result_data['profit_margin'] == '無資料': result_data['profit_margin'] = f"{fin.get('profitMargins', {}).get('raw', 0)*100:.2f}%" if fin.get('profitMargins', {}).get('raw') else "無資料"
+        except: pass
 
     return result_data
 
@@ -365,7 +384,7 @@ if stock_input:
         st.table(table_df)
 
         # ==========================================
-        # 💰 基本面營收與財務資訊 (國內 API)
+        # 💰 基本面營收與財務資訊 (FinMind 引擎)
         # ==========================================
         st.divider()
         st.subheader(f"💰 {final_name} 最新營收與獲利指標")
@@ -373,7 +392,7 @@ if stock_input:
         rev_data = get_revenue_info(d_data['symbol'])
         rc1, rc2, rc3, rc4 = st.columns(4)
         rc1.metric("最新單月營收", rev_data['total_revenue'])
-        rc2.metric("營收年增率", rev_data['revenue_growth'])
+        rc2.metric("營收年增率 (YoY)", rev_data['revenue_growth'])
         rc3.metric("毛利率", rev_data['gross_margin'])
         rc4.metric("淨利率", rev_data['profit_margin'])
 
