@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 莫蘭迪觸控版 (頂部防遮擋優化).py
+# 檔名：20150424 MACD + RSI 莫蘭迪觸控版 (左右安全邊距優化).py
 import streamlit as st
 import requests
 import pandas as pd
@@ -7,6 +7,22 @@ import altair as alt
 import re
 import urllib.parse
 from datetime import datetime, timezone, timedelta
+
+# ==========================================
+# 🚀 網頁基本設定與 CSS 邊界優化
+# ==========================================
+st.set_page_config(page_title="量化導航 2026", layout="wide")
+
+# 💡 核心優化：強制增加左右邊距，避免貼齊螢幕邊緣造成誤觸
+st.markdown("""
+    <style>
+    .block-container {
+        padding-left: 6% !important;
+        padding-right: 6% !important;
+        max-width: 1400px; /* 限制電腦版最大寬度，避免過度拉伸 */
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # ==========================================
 # 📊 第一部分：量化核心邏輯
@@ -147,9 +163,8 @@ def generate_detailed_report(res_score, rsi, roi, cost, is_stock_held):
     return report
 
 # ==========================================
-# 🚀 第四部分：網頁介面佈局
+# 🚀 第四部分：網頁介面與圖表渲染
 # ==========================================
-st.set_page_config(page_title="量化導航 2026", layout="wide")
 st.title("🌍 全球量化導航系統")
 
 st.markdown("---")
@@ -204,22 +219,18 @@ if stock_input:
         }).drop_duplicates(subset=['日期'])
 
         # ==========================================
-        # 💡 行動優化：左斜上方顯示 + 莫蘭迪黃色
+        # 💡 圖表與觸控渲染
         # ==========================================
         nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
         x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
-        
         morandi_yellow = '#CBAE73'
 
         selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
         rules = alt.Chart(source).mark_rule(color='gray', strokeDash=[3,3]).encode(x=x_axis).transform_filter(nearest)
 
-        # 💡 核心修改區塊：將 dy 改為更負的值，確保字體浮在點位正上方
-        
         # 1. 價格圖
         line_price = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False), title=None))
         points_price = line_price.mark_point(color='#1f77b4', size=60, filled=True).encode(opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
-        # 日期往上拉到 dy=-25，數值往上拉到 dy=-10
         text_date_p = line_price.mark_text(align='right', dx=-10, dy=-25, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(text='日期:N').transform_filter(nearest)
         text_price = line_price.mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('收盤價:Q', format='.2f')).transform_filter(nearest)
         c_price = (line_price + selectors + rules + points_price + text_date_p + text_price).properties(height=200, title="股價走勢")
@@ -240,7 +251,7 @@ if stock_input:
         text_rsi = line_rsi.mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
         c_rsi = (line_rsi + selectors + rules + points_rsi + text_date_r + text_rsi).properties(height=150, title="RSI (14)")
 
-        # 顯示同步圖表
+        # 顯示圖表
         st.altair_chart(alt.vconcat(c_price, c_macd, c_rsi).resolve_scale(x='shared'), use_container_width=True)
 
         # ==========================================
