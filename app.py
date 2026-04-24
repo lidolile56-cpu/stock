@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 莫蘭迪觸控版 (非對稱版面優化).py
+# 檔名：20150424 MACD + RSI 全局視野版 (量化診斷 + 即時新聞).py
 import streamlit as st
 import requests
 import pandas as pd
@@ -13,14 +13,19 @@ from datetime import datetime, timezone, timedelta
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
 
-# 💡 核心優化：非對稱邊距 (左邊極小，右邊極大)
 st.markdown("""
     <style>
     .block-container {
         padding-top: 2rem !important; 
-        padding-left: 2% !important;  /* 左邊間距小，貼近邊緣 */
-        padding-right: 15% !important; /* 右邊間距大，留出寬闊防誤觸區 */
+        padding-left: 2% !important;
+        padding-right: 15% !important;
         max-width: 1200px;
+    }
+    a {
+        text-decoration: none !important;
+    }
+    a:hover {
+        text-decoration: underline !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -61,7 +66,7 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：雙向反查搜尋引擎
+# 🌐 第二部分：搜尋與數據採集引擎
 # ==========================================
 def search_ticker(query):
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -132,6 +137,17 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
         return {'closes': c_c, 'ts': c_ts, 'price': live_price, 'name': official_name, 'symbol': meta.get('symbol')}
     except: return None
 
+# 💡 新增：即時新聞抓取引擎
+@st.cache_data(ttl=300) # 快取 5 分鐘
+def get_stock_news(query):
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(query)}&lang=zh-Hant-TW&region=TW&quotesCount=0&newsCount=5"
+    try:
+        res = requests.get(url, headers=headers, timeout=5).json()
+        return res.get('news', [])
+    except:
+        return []
+
 # ==========================================
 # 🧠 第三部分：深度診斷生成器 
 # ==========================================
@@ -164,7 +180,7 @@ def generate_detailed_report(res_score, rsi, roi, cost, is_stock_held):
     return report
 
 # ==========================================
-# 🚀 第四部分：網頁介面與圖表渲染
+# 🚀 第四部分：網頁介面佈局
 # ==========================================
 st.title("🌍 全球量化導航系統")
 
@@ -180,7 +196,7 @@ if stock_input:
     d_data, wk_data, mo_data = None, None, None
     found_symbol, display_name = None, None
 
-    with st.spinner(f'同步數據中...'):
+    with st.spinner(f'同步量化數據與市場新聞中...'):
         found_symbol, display_name = search_ticker(stock_input)
         if not found_symbol:
             found_symbol, display_name = stock_input.upper(), stock_input.upper()
@@ -220,24 +236,21 @@ if stock_input:
         }).drop_duplicates(subset=['日期'])
 
         # ==========================================
-        # 💡 行動優化：左斜上方顯示 + 莫蘭迪黃色
+        # 💡 圖表渲染區 (保持原有的左側莫蘭迪黃色優化)
         # ==========================================
         nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
         x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
-        
         morandi_yellow = '#CBAE73'
 
         selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
         rules = alt.Chart(source).mark_rule(color='gray', strokeDash=[3,3]).encode(x=x_axis).transform_filter(nearest)
 
-        # 1. 價格圖
         line_price = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False), title=None))
         points_price = line_price.mark_point(color='#1f77b4', size=60, filled=True).encode(opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
         text_date_p = line_price.mark_text(align='right', dx=-10, dy=-25, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(text='日期:N').transform_filter(nearest)
         text_price = line_price.mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('收盤價:Q', format='.2f')).transform_filter(nearest)
         c_price = (line_price + selectors + rules + points_price + text_date_p + text_price).properties(height=200, title="股價走勢")
 
-        # 2. MACD 柱狀圖
         bar_macd = alt.Chart(source).mark_bar().encode(
             x=x_axis, y=alt.Y('MACD柱狀', title=None),
             color=alt.condition(alt.datum['MACD柱狀'] > 0, alt.value('#ff4b4b'), alt.value('#00cc96'))
@@ -246,14 +259,12 @@ if stock_input:
         text_macd = alt.Chart(source).mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(x=x_axis, y=alt.Y('MACD柱狀'), text=alt.Text('MACD柱狀:Q', format='.3f')).transform_filter(nearest)
         c_macd = (bar_macd + selectors + rules + text_date_m + text_macd).properties(height=150, title="MACD 動能")
 
-        # 3. RSI 圖
         line_rsi = alt.Chart(source).mark_line(color='#9467bd', strokeWidth=2).encode(x=x_axis, y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None))
         points_rsi = line_rsi.mark_point(color='#9467bd', size=60, filled=True).encode(opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
         text_date_r = line_rsi.mark_text(align='right', dx=-10, dy=-25, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(text='日期:N').transform_filter(nearest)
         text_rsi = line_rsi.mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
         c_rsi = (line_rsi + selectors + rules + points_rsi + text_date_r + text_rsi).properties(height=150, title="RSI (14)")
 
-        # 顯示圖表
         st.altair_chart(alt.vconcat(c_price, c_macd, c_rsi).resolve_scale(x='shared'), use_container_width=True)
 
         # ==========================================
@@ -280,8 +291,34 @@ if stock_input:
         detailed_report = generate_detailed_report(res_score, rsi_vals[-1] if rsi_vals else 50, roi, cost_input, (cost_input > 0))
         st.markdown(detailed_report)
 
-        st.subheader("📅 近 5 日軌跡")
+        st.subheader("📅 近 5 日量化軌跡")
         table_df = pd.DataFrame({'日期': full_dates, '收盤': d_data['closes'], 'MACD': [round(x,3) for x in hist], 'RSI': [round(x,1) for x in rsi_vals]}).drop_duplicates(subset=['日期'], keep='last').tail(5)
         st.table(table_df)
+
+        # ==========================================
+        # 📰 新增：即時市場新聞區塊
+        # ==========================================
+        news_items = get_stock_news(final_name) # 使用中文名稱搜尋確保抓取本地新聞
+        if news_items:
+            st.divider()
+            st.subheader(f"📰 {final_name} 最新市場新聞")
+            for item in news_items[:5]: # 取最新 5 則
+                title = item.get('title', '無標題新聞')
+                link = item.get('link', '#')
+                publisher = item.get('publisher', '市場消息')
+                pub_time = item.get('providerPublishTime')
+                
+                if pub_time:
+                    pub_date = datetime.fromtimestamp(pub_time, tz=tz_tw).strftime('%Y/%m/%d %H:%M')
+                else:
+                    pub_date = "近期發布"
+
+                # 使用 markdown 顯示超連結標題與來源時間
+                st.markdown(f"**[{title}]({link})**")
+                st.caption(f"🗞️ {publisher} ｜ 🕒 {pub_date}")
+                st.write("") # 增加排版間距
+
+    else:
+        st.error(f"❌ 查無「{stock_input}」的數據，請檢查名稱或代碼。")
 else:
     st.info("💡 請在上方輸入股票名稱或代號開始分析。")
