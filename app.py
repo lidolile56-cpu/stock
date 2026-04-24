@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 終極無阻擋版 (財報手動精算修復).py
+# 檔名：20150424 MACD + RSI 終極裝甲防護版 (修復崩潰問題).py
 import streamlit as st
 import requests
 import pandas as pd
@@ -115,9 +115,12 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
         meta = result.get('meta', {})
         ts = result.get('timestamp', [])
         
-        if not ts or len(ts) < 5: return None 
+        # 💡 防呆修復：過濾掉有時 API 會回傳的 None 值
+        valid_ts = [t for t in ts if t is not None]
+        if not valid_ts or len(valid_ts) < 5: return None 
+        
         tz_tw = timezone(timedelta(hours=8))
-        if (datetime.now(tz_tw) - datetime.fromtimestamp(ts[-1], tz=tz_tw)).days > 30: return None
+        if (datetime.now(tz_tw) - datetime.fromtimestamp(valid_ts[-1], tz=tz_tw)).days > 30: return None
         
         quote = result.get('indicators', {}).get('quote', [{}])[0]
         raw_c = quote.get('close', [])
@@ -138,7 +141,7 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
         return {'closes': c_c, 'ts': c_ts, 'price': live_price, 'name': official_name, 'symbol': meta.get('symbol')}
     except: return None
 
-# 💡 終極核心修復：抓取絕對金額並「系統自動手動精算」
+# 💡 裝甲防護版：強制型別轉換，避免算數崩潰
 @st.cache_data(ttl=3600)
 def get_revenue_info(symbol):
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -148,57 +151,66 @@ def get_revenue_info(symbol):
     is_tw = symbol.endswith('.TW') or symbol.endswith('.TWO') or symbol.endswith('.TE')
 
     if is_tw:
-        # 1. 抓取單月營收並「手動計算 YoY」
         try:
             start_date_rev = (datetime.now(timezone.utc) - timedelta(days=400)).strftime('%Y-%m-%d')
             url_rev = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={pure_symbol}&start_date={start_date_rev}"
             res_rev = requests.get(url_rev, headers=headers, timeout=5).json()
-            if res_rev.get('data') and len(res_rev['data']) > 0:
+            
+            if res_rev.get('data'):
                 df_rev = pd.DataFrame(res_rev['data'])
-                latest_rev = df_rev.iloc[-1]
-                rev_val = float(latest_rev.get('revenue', 0))
+                # 強制轉換為數字，避免字串相減導致系統崩潰
+                df_rev['revenue'] = pd.to_numeric(df_rev['revenue'], errors='coerce')
+                df_rev['revenue_year'] = pd.to_numeric(df_rev['revenue_year'], errors='coerce')
+                df_rev['revenue_month'] = pd.to_numeric(df_rev['revenue_month'], errors='coerce')
+                df_rev = df_rev.dropna(subset=['revenue', 'revenue_year', 'revenue_month'])
                 
-                if rev_val > 0:
-                    rev_yi = rev_val / 100000000 
-                    result_data['total_revenue'] = f"{rev_yi:,.2f} 億 ({int(latest_rev.get('revenue_month'))}月)"
-                
-                # 尋找去年同月計算 YoY
-                last_year = latest_rev['revenue_year'] - 1
-                this_month = latest_rev['revenue_month']
-                last_year_data = df_rev[(df_rev['revenue_year'] == last_year) & (df_rev['revenue_month'] == this_month)]
-                if not last_year_data.empty:
-                    last_year_rev = float(last_year_data.iloc[0]['revenue'])
-                    if last_year_rev > 0:
-                        yoy = ((rev_val - last_year_rev) / last_year_rev) * 100
-                        result_data['revenue_growth'] = f"{yoy:+.2f}%"
+                if not df_rev.empty:
+                    latest_rev = df_rev.iloc[-1]
+                    rev_val = float(latest_rev['revenue'])
+                    
+                    if rev_val > 0:
+                        rev_yi = rev_val / 100000000 
+                        result_data['total_revenue'] = f"{rev_yi:,.2f} 億 ({int(latest_rev['revenue_month'])}月)"
+                    
+                    last_year = int(latest_rev['revenue_year']) - 1
+                    this_month = int(latest_rev['revenue_month'])
+                    last_year_data = df_rev[(df_rev['revenue_year'] == last_year) & (df_rev['revenue_month'] == this_month)]
+                    
+                    if not last_year_data.empty:
+                        last_year_rev = float(last_year_data.iloc[0]['revenue'])
+                        if last_year_rev > 0:
+                            yoy = ((rev_val - last_year_rev) / last_year_rev) * 100
+                            result_data['revenue_growth'] = f"{yoy:+.2f}%"
         except: pass
 
-        # 2. 抓取財報絕對金額並「手動計算毛利率與淨利率」
         try:
             start_date_fin = (datetime.now(timezone.utc) - timedelta(days=400)).strftime('%Y-%m-%d')
             url_fin = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={pure_symbol}&start_date={start_date_fin}"
             res_fin = requests.get(url_fin, headers=headers, timeout=5).json()
-            if res_fin.get('data') and len(res_fin['data']) > 0:
+            if res_fin.get('data'):
                 df_fin = pd.DataFrame(res_fin['data'])
-                latest_date = df_fin['date'].max()
-                df_latest = df_fin[df_fin['date'] == latest_date]
-                
-                # 抓取 Revenue, GrossProfit, NetIncome 的絕對金額
-                rev_mask = df_latest['type'].str.contains('Revenue|營業收入', case=False, regex=True, na=False)
-                gp_mask = df_latest['type'].str.contains('GrossProfit|營業毛利', case=False, regex=True, na=False)
-                ni_mask = df_latest['type'].str.contains('NetIncome|淨利', case=False, regex=True, na=False)
-                
-                rev_abs = float(df_latest[rev_mask]['value'].values[0]) if not df_latest[rev_mask].empty else 0
-                gp_abs = float(df_latest[gp_mask]['value'].values[0]) if not df_latest[gp_mask].empty else 0
-                ni_abs = float(df_latest[ni_mask]['value'].values[0]) if not df_latest[ni_mask].empty else 0
-                
-                # 自動精算百分比
-                if rev_abs > 0:
-                    result_data['gross_margin'] = f"{(gp_abs / rev_abs) * 100:.2f}%"
-                    result_data['profit_margin'] = f"{(ni_abs / rev_abs) * 100:.2f}%"
+                if 'date' in df_fin.columns and 'type' in df_fin.columns and 'value' in df_fin.columns:
+                    latest_date = df_fin['date'].max()
+                    df_latest = df_fin[df_fin['date'] == latest_date].copy()
+                    
+                    # 強制處理可能有逗號的數字
+                    df_latest['value'] = df_latest['value'].astype(str).str.replace(',', '')
+                    df_latest['value'] = pd.to_numeric(df_latest['value'], errors='coerce')
+                    
+                    rev_mask = df_latest['type'].str.contains('Revenue|營業收入', case=False, regex=True, na=False)
+                    gp_mask = df_latest['type'].str.contains('GrossProfit|營業毛利', case=False, regex=True, na=False)
+                    ni_mask = df_latest['type'].str.contains('NetIncome|淨利', case=False, regex=True, na=False)
+                    
+                    rev_abs = float(df_latest[rev_mask]['value'].values[0]) if not df_latest[rev_mask].empty else 0
+                    gp_abs = float(df_latest[gp_mask]['value'].values[0]) if not df_latest[gp_mask].empty else 0
+                    ni_abs = float(df_latest[ni_mask]['value'].values[0]) if not df_latest[ni_mask].empty else 0
+                    
+                    if rev_abs > 0:
+                        result_data['gross_margin'] = f"{(gp_abs / rev_abs) * 100:.2f}%"
+                        result_data['profit_margin'] = f"{(ni_abs / rev_abs) * 100:.2f}%"
         except: pass
 
-    # 引擎 B：美股備援 (Cookie 穿透)
+    # 美股備援
     if result_data['total_revenue'] == '無資料' or not is_tw:
         try:
             session = requests.Session()
@@ -265,13 +277,4 @@ def generate_detailed_report(res_score, rsi, roi, cost, is_stock_held):
     report += "#### ⚡ 2. 動能與風險水位 (RSI 指標)\n"
     if rsi >= 80: report += f"當前 RSI 高達 **{rsi:.1f}**，進入**「極度超買區」**。市場情緒極度狂熱，追高風險劇增，隨時面臨獲利了結的急跌回檔壓力。\n\n"
     elif rsi >= 50: report += f"當前 RSI 為 **{rsi:.1f}**，穩居 50 之上的**「多方優勢區」**。買盤力道大於賣盤，短期動能健康且具備上攻潛力。\n\n"
-    elif rsi > 20: report += f"當前 RSI 為 **{rsi:.1f}**，落入**「空方壓制區」**。反彈易遇上方套牢反壓，需等待突破中線 50 才能確認正式轉強。\n\n"
-    else: report += f"當前 RSI 僅 **{rsi:.1f}**，進入**「極度超賣區」**。恐慌拋售導致向下乖離過大，賣壓可能宣洩完畢，醞釀跌深反彈契機。\n\n"
-
-    report += "#### 🎯 3. 綜合實戰策略建議\n"
-    if is_stock_held:
-        if roi < -0.07: report += f"> 🛑 **【防禦優先】執行止損**：虧損已達 **{roi:.2%}**，觸及 7% 防線。保護本金為首要任務，建議停損出場，避免深套。\n"
-        elif res_score == 3 and rsi < 80: report += "> ✅ **【強勢進攻】持股續抱**：趨勢完美共振且未見過熱，建議以 10 日線或月線為移動停利點，讓獲利奔跑。\n"
-        elif res_score == 3 and rsi >= 80: report += "> ⚠️ **【風險控管】逢高分批減碼**：大趨勢看好但短線乖離過大，建議分批獲利了結（如先賣 1/3），收回部分本金。\n"
-        elif res_score == 0: report += "> 📉 **【資金抽離】逢反彈減碼**：大環境對多方極度不利，強烈建議趁盤中反彈果斷降低部位，切忌向下攤平。\n"
-        else: report += "> 🔎 **【防守反擊】區間操作**：多空交戰無明確單邊趨勢。若在獲利狀態可續抱觀察；若已近成本價，嚴設跌破均線即退場。\n"
+    elif rsi > 20: report += f"當前 RSI 為 **{
