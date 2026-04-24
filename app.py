@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 終極無阻擋版 (FinMind 財報引擎).py
+# 檔名：20150424 MACD + RSI 終極無阻擋版 (財報手動精算修復).py
 import streamlit as st
 import requests
 import pandas as pd
@@ -138,7 +138,7 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
         return {'closes': c_c, 'ts': c_ts, 'price': live_price, 'name': official_name, 'symbol': meta.get('symbol')}
     except: return None
 
-# 💡 終極核心修復：FinMind 台灣開源資料庫直連
+# 💡 終極核心修復：抓取絕對金額並「系統自動手動精算」
 @st.cache_data(ttl=3600)
 def get_revenue_info(symbol):
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -147,42 +147,58 @@ def get_revenue_info(symbol):
     pure_symbol = symbol.split('.')[0]
     is_tw = symbol.endswith('.TW') or symbol.endswith('.TWO') or symbol.endswith('.TE')
 
-    # 引擎 A：FinMind 開放資料庫 (專治台灣股票)
     if is_tw:
+        # 1. 抓取單月營收並「手動計算 YoY」
         try:
-            # 1. 抓取營收
-            start_date_rev = (datetime.now(timezone.utc) - timedelta(days=120)).strftime('%Y-%m-%d')
+            start_date_rev = (datetime.now(timezone.utc) - timedelta(days=400)).strftime('%Y-%m-%d')
             url_rev = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={pure_symbol}&start_date={start_date_rev}"
             res_rev = requests.get(url_rev, headers=headers, timeout=5).json()
-            if res_rev.get('data'):
-                latest_rev = res_rev['data'][-1] # 取最新一筆
-                rev_val = latest_rev.get('revenue', 0)
-                yoy = latest_rev.get('revenue_YearOnYearRatio')
-                if rev_val:
-                    rev_yi = rev_val / 100000000 # 轉為億
-                    result_data['total_revenue'] = f"{rev_yi:,.2f} 億 ({latest_rev.get('revenue_month')}月)"
-                if yoy is not None:
-                    result_data['revenue_growth'] = f"{yoy:.2f}%"
+            if res_rev.get('data') and len(res_rev['data']) > 0:
+                df_rev = pd.DataFrame(res_rev['data'])
+                latest_rev = df_rev.iloc[-1]
+                rev_val = float(latest_rev.get('revenue', 0))
+                
+                if rev_val > 0:
+                    rev_yi = rev_val / 100000000 
+                    result_data['total_revenue'] = f"{rev_yi:,.2f} 億 ({int(latest_rev.get('revenue_month'))}月)"
+                
+                # 尋找去年同月計算 YoY
+                last_year = latest_rev['revenue_year'] - 1
+                this_month = latest_rev['revenue_month']
+                last_year_data = df_rev[(df_rev['revenue_year'] == last_year) & (df_rev['revenue_month'] == this_month)]
+                if not last_year_data.empty:
+                    last_year_rev = float(last_year_data.iloc[0]['revenue'])
+                    if last_year_rev > 0:
+                        yoy = ((rev_val - last_year_rev) / last_year_rev) * 100
+                        result_data['revenue_growth'] = f"{yoy:+.2f}%"
+        except: pass
 
-            # 2. 抓取財報三率
+        # 2. 抓取財報絕對金額並「手動計算毛利率與淨利率」
+        try:
             start_date_fin = (datetime.now(timezone.utc) - timedelta(days=400)).strftime('%Y-%m-%d')
             url_fin = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={pure_symbol}&start_date={start_date_fin}"
             res_fin = requests.get(url_fin, headers=headers, timeout=5).json()
-            if res_fin.get('data'):
+            if res_fin.get('data') and len(res_fin['data']) > 0:
                 df_fin = pd.DataFrame(res_fin['data'])
                 latest_date = df_fin['date'].max()
                 df_latest = df_fin[df_fin['date'] == latest_date]
                 
-                # 毛利率
-                gross = df_latest[df_latest['type'].str.contains('GrossProfitMargin', case=False, na=False)]
-                if not gross.empty: result_data['gross_margin'] = f"{gross['value'].values[0]:.2f}%"
+                # 抓取 Revenue, GrossProfit, NetIncome 的絕對金額
+                rev_mask = df_latest['type'].str.contains('Revenue|營業收入', case=False, regex=True, na=False)
+                gp_mask = df_latest['type'].str.contains('GrossProfit|營業毛利', case=False, regex=True, na=False)
+                ni_mask = df_latest['type'].str.contains('NetIncome|淨利', case=False, regex=True, na=False)
                 
-                # 淨利率
-                net = df_latest[df_latest['type'].str.contains('NetIncomeMargin|NetProfitMargin', case=False, na=False)]
-                if not net.empty: result_data['profit_margin'] = f"{net['value'].values[0]:.2f}%"
+                rev_abs = float(df_latest[rev_mask]['value'].values[0]) if not df_latest[rev_mask].empty else 0
+                gp_abs = float(df_latest[gp_mask]['value'].values[0]) if not df_latest[gp_mask].empty else 0
+                ni_abs = float(df_latest[ni_mask]['value'].values[0]) if not df_latest[ni_mask].empty else 0
+                
+                # 自動精算百分比
+                if rev_abs > 0:
+                    result_data['gross_margin'] = f"{(gp_abs / rev_abs) * 100:.2f}%"
+                    result_data['profit_margin'] = f"{(ni_abs / rev_abs) * 100:.2f}%"
         except: pass
 
-    # 引擎 B：Yahoo US 穿透技術 (用於美股或備援)
+    # 引擎 B：美股備援 (Cookie 穿透)
     if result_data['total_revenue'] == '無資料' or not is_tw:
         try:
             session = requests.Session()
@@ -259,160 +275,3 @@ def generate_detailed_report(res_score, rsi, roi, cost, is_stock_held):
         elif res_score == 3 and rsi >= 80: report += "> ⚠️ **【風險控管】逢高分批減碼**：大趨勢看好但短線乖離過大，建議分批獲利了結（如先賣 1/3），收回部分本金。\n"
         elif res_score == 0: report += "> 📉 **【資金抽離】逢反彈減碼**：大環境對多方極度不利，強烈建議趁盤中反彈果斷降低部位，切忌向下攤平。\n"
         else: report += "> 🔎 **【防守反擊】區間操作**：多空交戰無明確單邊趨勢。若在獲利狀態可續抱觀察；若已近成本價，嚴設跌破均線即退場。\n"
-    else:
-        report += "> 💡 **【空手觀望中】若您正在尋找進場點：**\n> "
-        if res_score == 3 and rsi < 80: report += "趨勢明確向上，可尋找股價「量縮回測均線」的時機伺機佈局。"
-        elif res_score == 3 and rsi >= 80: report += "標的極度強勢但追高風險大。建議耐心等待 RSI 回落消化浮額後再行評估。"
-        elif res_score == 0: report += "趨勢全面偏空，強烈建議「多看少做」，切勿急於摸底接刀。"
-        else: report += "方向混沌不明朗，建議等待共振得分提升（至少 2 分）確認趨勢後再考慮進場。"
-    return report
-
-# ==========================================
-# 🚀 第四部分：網頁介面與圖表渲染
-# ==========================================
-st.title("🌍 全球量化導航系統")
-
-st.markdown("---")
-search_col, cost_col = st.columns([3, 1])
-with search_col:
-    stock_input = st.text_input("🔍 名稱/代碼", value="", placeholder="輸入個股名稱或股號 (例: 台積電, 3293)").strip()
-with cost_col:
-    cost_input = st.number_input("💰 持有成本", value=0.0)
-st.markdown("---")
-
-if stock_input:
-    d_data, wk_data, mo_data = None, None, None
-    found_symbol, display_name = None, None
-
-    with st.spinner(f'全維度數據同步中 (圖表/營收/新聞)...'):
-        found_symbol, display_name = search_ticker(stock_input)
-        if not found_symbol:
-            found_symbol, display_name = stock_input.upper(), stock_input.upper()
-
-        if found_symbol:
-            base_symbol = found_symbol.split('.')[0]
-            tickers_to_try = [found_symbol]
-            if base_symbol.isdigit():
-                for sfx in ['.TW', '.TWO', '.TE']:
-                    if f"{base_symbol}{sfx}" not in tickers_to_try: tickers_to_try.append(f"{base_symbol}{sfx}")
-            
-            for t in tickers_to_try:
-                d_data = get_verified_data(t, "1d", "2y")
-                if d_data:
-                    wk_data = get_verified_data(t, "1wk", "max")
-                    mo_data = get_verified_data(t, "1mo", "max")
-                    break 
-
-    if d_data:
-        tz_tw = timezone(timedelta(hours=8))
-        report_time = datetime.now(tz_tw).strftime('%Y/%m/%d %H:%M:%S')
-        is_tw = d_data['symbol'].endswith('.TW') or d_data['symbol'].endswith('.TWO') or d_data['symbol'].endswith('.TE')
-        
-        final_name = display_name if re.search(r'[\u4e00-\u9fff]', str(display_name)) else d_data['name']
-        display_label = f"{final_name} ({d_data['symbol']})"
-        st.success(f"✅ 標的：{display_label} ｜ {report_time}")
-        
-        full_dates = [datetime.fromtimestamp(t, tz=tz_tw).strftime('%Y/%m/%d') for t in d_data['ts']]
-        dif, dea, hist = perform_macd_full(d_data['closes'], is_tw)
-        rsi_vals = calculate_rsi(d_data['closes'])
-        
-        source = pd.DataFrame({
-            '日期': full_dates,
-            '收盤價': d_data['closes'],
-            'MACD柱狀': hist,
-            'RSI': rsi_vals
-        }).drop_duplicates(subset=['日期'])
-
-        # ==========================================
-        # 💡 圖表渲染區 (莫蘭迪黃色 + 左側防遮擋)
-        # ==========================================
-        nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
-        x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
-        morandi_yellow = '#CBAE73'
-
-        selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
-        rules = alt.Chart(source).mark_rule(color='gray', strokeDash=[3,3]).encode(x=x_axis).transform_filter(nearest)
-
-        line_price = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False), title=None))
-        points_price = line_price.mark_point(color='#1f77b4', size=60, filled=True).encode(opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
-        text_date_p = line_price.mark_text(align='right', dx=-10, dy=-25, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(text='日期:N').transform_filter(nearest)
-        text_price = line_price.mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('收盤價:Q', format='.2f')).transform_filter(nearest)
-        c_price = (line_price + selectors + rules + points_price + text_date_p + text_price).properties(height=200, title="股價走勢")
-
-        bar_macd = alt.Chart(source).mark_bar().encode(
-            x=x_axis, y=alt.Y('MACD柱狀', title=None),
-            color=alt.condition(alt.datum['MACD柱狀'] > 0, alt.value('#ff4b4b'), alt.value('#00cc96'))
-        )
-        text_date_m = alt.Chart(source).mark_text(align='right', dx=-10, dy=-25, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(x=x_axis, y=alt.Y('MACD柱狀'), text='日期:N').transform_filter(nearest)
-        text_macd = alt.Chart(source).mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(x=x_axis, y=alt.Y('MACD柱狀'), text=alt.Text('MACD柱狀:Q', format='.3f')).transform_filter(nearest)
-        c_macd = (bar_macd + selectors + rules + text_date_m + text_macd).properties(height=150, title="MACD 動能")
-
-        line_rsi = alt.Chart(source).mark_line(color='#9467bd', strokeWidth=2).encode(x=x_axis, y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None))
-        points_rsi = line_rsi.mark_point(color='#9467bd', size=60, filled=True).encode(opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
-        text_date_r = line_rsi.mark_text(align='right', dx=-10, dy=-25, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(text='日期:N').transform_filter(nearest)
-        text_rsi = line_rsi.mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
-        c_rsi = (line_rsi + selectors + rules + points_rsi + text_date_r + text_rsi).properties(height=150, title="RSI (14)")
-
-        st.altair_chart(alt.vconcat(c_price, c_macd, c_rsi).resolve_scale(x='shared'), use_container_width=True)
-
-        # ==========================================
-        # 💡 深度診斷報告區塊
-        # ==========================================
-        st.divider()
-        st.subheader(f"💡 {display_label} 深度量化診斷")
-        h_d_up = hist[-1] > hist[-2] if hist else False
-        _, _, h_w = perform_macd_full(wk_data['closes'], is_tw) if wk_data else (0,0,[0,0])
-        _, _, h_m = perform_macd_full(mo_data['closes'], is_tw) if mo_data else (0,0,[0,0])
-        res_score = sum([h_d_up, (len(h_w)>1 and h_w[-1]>h_w[-2]), (len(h_m)>1 and h_m[-1]>h_m[-2])])
-        score_info = {3: "🟢 3 分 (主升共振)", 2: "🟡 2 分 (趨勢修復)", 1: "🟠 1 分 (弱勢反彈)", 0: "🔴 0 分 (空頭排列)"}
-        
-        c1, c2, c3 = st.columns(3)
-        c1.metric("當前價位", f"${d_data['price']}")
-        roi = 0
-        if cost_input > 0:
-            roi = (d_data['price'] - cost_input) / cost_input
-            c2.metric("實時損益率", f"{roi:+.2%}")
-        else: c2.metric("持有狀態", "空手觀望")
-        c3.metric("共振得分", score_info[res_score])
-        
-        st.markdown("---")
-        detailed_report = generate_detailed_report(res_score, rsi_vals[-1] if rsi_vals else 50, roi, cost_input, (cost_input > 0))
-        st.markdown(detailed_report)
-
-        st.subheader("📅 近 5 日量化軌跡")
-        table_df = pd.DataFrame({'日期': full_dates, '收盤': d_data['closes'], 'MACD': [round(x,3) for x in hist], 'RSI': [round(x,1) for x in rsi_vals]}).drop_duplicates(subset=['日期'], keep='last').tail(5)
-        st.table(table_df)
-
-        # ==========================================
-        # 💰 基本面營收與財務資訊 (FinMind 引擎)
-        # ==========================================
-        st.divider()
-        st.subheader(f"💰 {final_name} 最新營收與獲利指標")
-        
-        rev_data = get_revenue_info(d_data['symbol'])
-        rc1, rc2, rc3, rc4 = st.columns(4)
-        rc1.metric("最新單月營收", rev_data['total_revenue'])
-        rc2.metric("營收年增率 (YoY)", rev_data['revenue_growth'])
-        rc3.metric("毛利率", rev_data['gross_margin'])
-        rc4.metric("淨利率", rev_data['profit_margin'])
-
-        # ==========================================
-        # 📰 即時市場新聞區塊
-        # ==========================================
-        st.divider()
-        st.subheader(f"📰 {final_name} 最新市場新聞")
-        
-        news_items = get_stock_news(final_name) 
-        
-        if news_items:
-            for item in news_items: 
-                st.markdown(f"**[{item['title']}]({item['link']})**")
-                st.caption(f"🗞️ {item['publisher']} ｜ 🕒 {item['pubDate']}")
-                st.write("") 
-        else:
-            st.info("目前雲端伺服器未返回相關新聞，或該標的近期無重大新聞發布。")
-
-    else:
-        st.error(f"❌ 查無「{stock_input}」的數據，請檢查名稱或代碼。")
-else:
-    st.info("💡 請在上方輸入股票名稱或代號開始分析。")
