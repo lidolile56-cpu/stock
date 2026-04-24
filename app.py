@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 本土專屬伺服器版.py
+# 檔名：20150424 MACD + RSI 雙向反查完美版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -44,10 +44,10 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：台灣專屬三重無死角搜尋引擎
+# 🌐 第二部分：全天候雙向反查搜尋引擎
 # ==========================================
 def search_ticker(query):
-    """專治上櫃/興櫃中文找不到的問題"""
+    """不論輸入中文或代碼，皆反查出【正確代碼 + 繁體中文名】"""
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     
     # 1. 第一重：Yahoo 奇摩股市 (台灣本土專屬 API)
@@ -68,21 +68,27 @@ def search_ticker(query):
         fm_url = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo"
         res = requests.get(fm_url, headers=headers, timeout=5).json()
         for item in res.get('data', []):
-            if query in item.get('stock_name', ''):
-                sid = item.get('stock_id')
+            sid = item.get('stock_id')
+            sname = item.get('stock_name', '')
+            # 💡 允許輸入代碼 (sid) 或名稱 (sname) 皆可命中
+            if query == sid or query in sname:
                 stype = item.get('type')
-                if stype == 'twse': return f"{sid}.TW", query
-                elif stype == 'tpex': return f"{sid}.TWO", query
-                elif stype == 'emerging': return f"{sid}.TE", query
+                if stype == 'twse': return f"{sid}.TW", sname
+                elif stype == 'tpex': return f"{sid}.TWO", sname
+                elif stype == 'emerging': return f"{sid}.TE", sname
     except: pass
 
-    # 3. 第三重：極速實體字典 (最後防線)
+    # 3. 第三重：極速實體字典 (雙向反查)
     fallback = {
         "光洋科": "3276.TWO", "鈊象": "3293.TWO", "元太": "8069.TWO",
         "台積電": "2330.TW", "鴻海": "2317.TW", "聯發科": "2454.TW",
         "長榮": "2603.TW", "星宇航空": "2646.TW", "乾杯": "1269.TE"
     }
+    # 名字查代碼
     if query in fallback: return fallback[query], query
+    # 代碼查名字
+    for name, sym in fallback.items():
+        if query == sym.split('.')[0]: return sym, name
     
     return None, None
 
@@ -101,7 +107,7 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
         meta = result.get('meta', {})
         ts = result.get('timestamp', [])
         
-        # 💡 活體數據檢測：K線太少或太久沒交易(如超過30天)的殭屍代碼，直接丟棄！
+        # 活體數據檢測
         if not ts or len(ts) < 5: return None 
         tz_tw = timezone(timedelta(hours=8))
         if (datetime.now(tz_tw) - datetime.fromtimestamp(ts[-1], tz=tz_tw)).days > 30: 
@@ -114,7 +120,6 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
             if raw_c[i] is not None:
                 c_ts.append(ts[i]); c_c.append(float(raw_c[i]))
 
-        # 處理盤中實時價格
         live_price = meta.get('regularMarketPrice')
         if live_price is None and c_c: live_price = c_c[-1]
 
@@ -132,10 +137,10 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
 # 🚀 第三部分：網頁介面
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
-st.title("🌍 全球量化導航系統 (本土伺服器解碼版)")
+st.title("🌍 全球量化導航系統 (雙向反查解碼版)")
 
 st.sidebar.header("🔍 查詢設定")
-stock_input = st.sidebar.text_input("輸入名稱或代碼 (全市場支援)", value="光洋科").strip()
+stock_input = st.sidebar.text_input("輸入名稱或代碼 (全市場支援)", value="2330").strip()
 cost_input = st.sidebar.number_input("持有成本 (0 代表觀望)", value=0.0)
 
 if stock_input:
@@ -143,10 +148,11 @@ if stock_input:
     found_symbol, display_name = None, None
 
     with st.spinner(f'正在連線台灣本土伺服器解析「{stock_input}」...'):
-        # 1. 判斷是否含中文，呼叫本土搜尋引擎
-        if re.search(r'[\u4e00-\u9fff]', stock_input):
-            found_symbol, display_name = search_ticker(stock_input)
-        else:
+        # 💡 取消中文字限制：所有輸入都會強制進入本土引擎進行反查！
+        found_symbol, display_name = search_ticker(stock_input)
+        
+        # 若本土引擎查無資料 (例如: 美股 AAPL)，才退回直接使用輸入值
+        if not found_symbol:
             found_symbol = stock_input.upper()
             display_name = stock_input.upper()
 
@@ -155,7 +161,6 @@ if stock_input:
             base_symbol = found_symbol.split('.')[0]
 
             if base_symbol.isdigit():
-                # 💡 優先嘗試本土 API 給出的正確後綴
                 if '.' in found_symbol: tickers_to_try.append(found_symbol)
                 for sfx in ['.TW', '.TWO', '.TE']:
                     candidate = f"{base_symbol}{sfx}"
@@ -163,7 +168,6 @@ if stock_input:
             else:
                 tickers_to_try = [found_symbol] 
             
-            # 2. 依序叩門，直到抓到「非殭屍」的活體數據為止
             for t in tickers_to_try:
                 d_data = get_verified_data(t, "1d", "2y")
                 if d_data:
@@ -176,7 +180,12 @@ if stock_input:
         report_time = datetime.now(tz_tw).strftime('%Y/%m/%d %H:%M:%S')
         is_tw = d_data['symbol'].endswith('.TW') or d_data['symbol'].endswith('.TWO') or d_data['symbol'].endswith('.TE')
         
-        final_name = display_name if re.search(r'[\u4e00-\u9fff]', display_name) else d_data['name']
+        # 💡 強制名稱決策：優先使用本土引擎反查出的「繁體中文」，如果沒有才用 Yahoo 英文名
+        if display_name and re.search(r'[\u4e00-\u9fff]', display_name):
+            final_name = display_name
+        else:
+            final_name = d_data['name']
+            
         display_label = f"{final_name} ({d_data['symbol']})"
         
         st.success(f"✅ 成功對位！標的：{display_label} ｜ 報告產製時間：{report_time}")
@@ -237,4 +246,4 @@ if stock_input:
         table_df = pd.DataFrame({'交易日期': full_dates, '收盤價': d_data['closes'], 'MACD柱狀': [round(x,3) for x in hist], 'RSI(14)': [round(x,1) for x in rsi_vals]}).drop_duplicates(subset=['交易日期'], keep='last').tail(5)
         st.table(table_df)
     else:
-        st.error(f"❌ 查無「{stock_input}」的交易數據。請檢查名稱是否正確。")
+        st.error(f"❌ 查無「{stock_input}」的交易數據。請檢查名稱或代碼是否正確。")
