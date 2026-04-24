@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 全局視野版 (量化診斷 + 即時新聞).py
+# 檔名：20150424 MACD + RSI 終極全配版 (含穩定版新聞引擎).py
 import streamlit as st
 import requests
 import pandas as pd
@@ -13,12 +13,13 @@ from datetime import datetime, timezone, timedelta
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
 
+# 💡 核心優化：非對稱邊距 (左邊 2%，右邊 15%)
 st.markdown("""
     <style>
     .block-container {
         padding-top: 2rem !important; 
-        padding-left: 2% !important;
-        padding-right: 15% !important;
+        padding-left: 2% !important;  
+        padding-right: 15% !important; 
         max-width: 1200px;
     }
     a {
@@ -66,7 +67,7 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：搜尋與數據採集引擎
+# 🌐 第二部分：雙向反查搜尋與新聞引擎
 # ==========================================
 def search_ticker(query):
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -137,16 +138,27 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
         return {'closes': c_c, 'ts': c_ts, 'price': live_price, 'name': official_name, 'symbol': meta.get('symbol')}
     except: return None
 
-# 💡 新增：即時新聞抓取引擎
-@st.cache_data(ttl=300) # 快取 5 分鐘
-def get_stock_news(query):
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(query)}&lang=zh-Hant-TW&region=TW&quotesCount=0&newsCount=5"
+# 💡 修正版：穩定抓取新聞引擎 (以代碼優先)
+@st.cache_data(ttl=300)
+def get_stock_news(symbol, name):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    news = []
+    # 優先使用代碼搜尋，準確率最高
     try:
+        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={symbol}&lang=zh-Hant-TW&region=TW&quotesCount=0&newsCount=5"
         res = requests.get(url, headers=headers, timeout=5).json()
-        return res.get('news', [])
-    except:
-        return []
+        news = res.get('news', [])
+    except: pass
+    
+    # 若代碼查無，備援使用中文名稱搜尋
+    if not news:
+        try:
+            url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(name)}&lang=zh-Hant-TW&region=TW&quotesCount=0&newsCount=5"
+            res = requests.get(url, headers=headers, timeout=5).json()
+            news = res.get('news', [])
+        except: pass
+        
+    return news
 
 # ==========================================
 # 🧠 第三部分：深度診斷生成器 
@@ -180,7 +192,7 @@ def generate_detailed_report(res_score, rsi, roi, cost, is_stock_held):
     return report
 
 # ==========================================
-# 🚀 第四部分：網頁介面佈局
+# 🚀 第四部分：網頁介面與圖表渲染
 # ==========================================
 st.title("🌍 全球量化導航系統")
 
@@ -236,10 +248,11 @@ if stock_input:
         }).drop_duplicates(subset=['日期'])
 
         # ==========================================
-        # 💡 圖表渲染區 (保持原有的左側莫蘭迪黃色優化)
+        # 💡 行動優化：左側防遮擋 + 莫蘭迪黃色
         # ==========================================
         nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
         x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
+        
         morandi_yellow = '#CBAE73'
 
         selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
@@ -291,18 +304,21 @@ if stock_input:
         detailed_report = generate_detailed_report(res_score, rsi_vals[-1] if rsi_vals else 50, roi, cost_input, (cost_input > 0))
         st.markdown(detailed_report)
 
-        st.subheader("📅 近 5 日量化軌跡")
+        st.subheader("📅 近 5 日軌跡")
         table_df = pd.DataFrame({'日期': full_dates, '收盤': d_data['closes'], 'MACD': [round(x,3) for x in hist], 'RSI': [round(x,1) for x in rsi_vals]}).drop_duplicates(subset=['日期'], keep='last').tail(5)
         st.table(table_df)
 
         # ==========================================
-        # 📰 新增：即時市場新聞區塊
+        # 📰 新增：即時市場新聞區塊 (防呆穩定版)
         # ==========================================
-        news_items = get_stock_news(final_name) # 使用中文名稱搜尋確保抓取本地新聞
+        st.divider()
+        st.subheader(f"📰 {final_name} 最新市場新聞")
+        
+        # 使用代碼優先搜尋確保命中率
+        news_items = get_stock_news(d_data['symbol'], final_name) 
+        
         if news_items:
-            st.divider()
-            st.subheader(f"📰 {final_name} 最新市場新聞")
-            for item in news_items[:5]: # 取最新 5 則
+            for item in news_items[:5]: 
                 title = item.get('title', '無標題新聞')
                 link = item.get('link', '#')
                 publisher = item.get('publisher', '市場消息')
@@ -313,10 +329,12 @@ if stock_input:
                 else:
                     pub_date = "近期發布"
 
-                # 使用 markdown 顯示超連結標題與來源時間
                 st.markdown(f"**[{title}]({link})**")
                 st.caption(f"🗞️ {publisher} ｜ 🕒 {pub_date}")
-                st.write("") # 增加排版間距
+                st.write("") 
+        else:
+            st.info("目前雲端伺服器未返回相關新聞，或該標的近期無重大新聞發布。")
+            st.markdown(f"[👉 點我直接前往 Yahoo 奇摩股市查看 {final_name} 最新動態](https://tw.stock.yahoo.com/quote/{d_data['symbol']})")
 
     else:
         st.error(f"❌ 查無「{stock_input}」的數據，請檢查名稱或代碼。")
