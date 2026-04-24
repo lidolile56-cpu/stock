@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 終極全配版 (精準新聞引擎修復).py
+# 檔名：20150424 MACD + RSI 終極全維度版 (技術 + 營收 + 新聞).py
 import streamlit as st
 import requests
 import pandas as pd
@@ -68,7 +68,7 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：雙向反查搜尋與新聞引擎
+# 🌐 第二部分：全方位資料抓取引擎
 # ==========================================
 def search_ticker(query):
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -139,12 +139,29 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
         return {'closes': c_c, 'ts': c_ts, 'price': live_price, 'name': official_name, 'symbol': meta.get('symbol')}
     except: return None
 
-# 💡 核心修復：改用 Google News 台灣站抓取新聞 (保證 100% 關聯度與繁中)
+# 💡 新增：穩定的財務與營收抓取引擎
+@st.cache_data(ttl=3600)
+def get_revenue_info(symbol):
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=financialData"
+    try:
+        res = requests.get(url, headers=headers, timeout=5).json()
+        fin_data = res.get('quoteSummary', {}).get('result', [{}])[0].get('financialData', {})
+        
+        return {
+            'total_revenue': fin_data.get('totalRevenue', {}).get('fmt', '無資料'),
+            'revenue_growth': fin_data.get('revenueGrowth', {}).get('fmt', '無資料'),
+            'gross_margin': fin_data.get('grossMargins', {}).get('fmt', '無資料'),
+            'profit_margin': fin_data.get('profitMargins', {}).get('fmt', '無資料')
+        }
+    except:
+        return None
+
+# 💡 保留：Google 新聞引擎
 @st.cache_data(ttl=300)
 def get_stock_news(name):
     news = []
     try:
-        # 直接拿中文名稱去 Google 新聞台灣站搜尋
         query = urllib.parse.quote(f"{name} 股市")
         url = f"https://news.google.com/rss/search?q={query}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
         res = requests.get(url, timeout=5)
@@ -155,14 +172,12 @@ def get_stock_news(name):
             link = item.findtext('link', default='#')
             pubDate = item.findtext('pubDate', default='')
             
-            # 處理 Google News 預設將媒體名稱放在標題後面的格式
             if " - " in raw_title:
                 title, publisher = raw_title.rsplit(" - ", 1)
             else:
                 title = raw_title
                 publisher = item.findtext('source', default='市場新聞')
                 
-            # 轉換時間格式
             pub_date_str = "近期發布"
             if pubDate:
                 try:
@@ -170,14 +185,9 @@ def get_stock_news(name):
                     tz_tw = timezone(timedelta(hours=8))
                     pub_date_str = dt.replace(tzinfo=timezone.utc).astimezone(tz_tw).strftime('%Y/%m/%d %H:%M')
                 except:
-                    pub_date_str = pubDate[:16] # 轉換失敗時直接切取日期字串
+                    pub_date_str = pubDate[:16] 
                     
-            news.append({
-                'title': title,
-                'link': link,
-                'publisher': publisher,
-                'pubDate': pub_date_str
-            })
+            news.append({'title': title, 'link': link, 'publisher': publisher, 'pubDate': pub_date_str})
     except: pass
     return news
 
@@ -229,7 +239,7 @@ if stock_input:
     d_data, wk_data, mo_data = None, None, None
     found_symbol, display_name = None, None
 
-    with st.spinner(f'同步量化數據與市場新聞中...'):
+    with st.spinner(f'全維度數據同步中 (圖表/營收/新聞)...'):
         found_symbol, display_name = search_ticker(stock_input)
         if not found_symbol:
             found_symbol, display_name = stock_input.upper(), stock_input.upper()
@@ -269,11 +279,10 @@ if stock_input:
         }).drop_duplicates(subset=['日期'])
 
         # ==========================================
-        # 💡 行動優化：左側防遮擋 + 莫蘭迪黃色
+        # 💡 圖表渲染區 (莫蘭迪黃色 + 左側防遮擋)
         # ==========================================
         nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
         x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
-        
         morandi_yellow = '#CBAE73'
 
         selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
@@ -281,7 +290,6 @@ if stock_input:
 
         line_price = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False), title=None))
         points_price = line_price.mark_point(color='#1f77b4', size=60, filled=True).encode(opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
-        # 💡 保留：往左靠齊 (align='right')，往上位移防遮擋 (dy=-25, -10)
         text_date_p = line_price.mark_text(align='right', dx=-10, dy=-25, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(text='日期:N').transform_filter(nearest)
         text_price = line_price.mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('收盤價:Q', format='.2f')).transform_filter(nearest)
         c_price = (line_price + selectors + rules + points_price + text_date_p + text_price).properties(height=200, title="股價走勢")
@@ -326,17 +334,32 @@ if stock_input:
         detailed_report = generate_detailed_report(res_score, rsi_vals[-1] if rsi_vals else 50, roi, cost_input, (cost_input > 0))
         st.markdown(detailed_report)
 
-        st.subheader("📅 近 5 日軌跡")
+        st.subheader("📅 近 5 日量化軌跡")
         table_df = pd.DataFrame({'日期': full_dates, '收盤': d_data['closes'], 'MACD': [round(x,3) for x in hist], 'RSI': [round(x,1) for x in rsi_vals]}).drop_duplicates(subset=['日期'], keep='last').tail(5)
         st.table(table_df)
 
         # ==========================================
-        # 📰 新增：即時市場新聞區塊 (修復版)
+        # 💰 新增：基本面營收與財務資訊
+        # ==========================================
+        st.divider()
+        st.subheader(f"💰 {final_name} 最新財務與營收資訊 (TTM)")
+        
+        rev_data = get_revenue_info(d_data['symbol'])
+        if rev_data:
+            rc1, rc2, rc3, rc4 = st.columns(4)
+            rc1.metric("總營收 (近12個月)", rev_data['total_revenue'])
+            rc2.metric("營收年增率", rev_data['revenue_growth'])
+            rc3.metric("毛利率", rev_data['gross_margin'])
+            rc4.metric("淨利率", rev_data['profit_margin'])
+        else:
+            st.info("目前雲端伺服器暫無該標的之即時財務數據。")
+
+        # ==========================================
+        # 📰 保留：即時市場新聞區塊 (Google 新聞引擎)
         # ==========================================
         st.divider()
         st.subheader(f"📰 {final_name} 最新市場新聞")
         
-        # 使用 Google 引擎以名稱搜尋，保證高相關度
         news_items = get_stock_news(final_name) 
         
         if news_items:
