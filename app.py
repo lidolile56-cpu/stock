@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 終極全維度版 (技術 + 營收 + 新聞).py
+# 檔名：20150424 MACD + RSI 終極全維度版 (雙引擎財報解鎖).py
 import streamlit as st
 import requests
 import pandas as pd
@@ -14,7 +14,6 @@ from datetime import datetime, timezone, timedelta
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
 
-# 💡 保留：左 2% 右 15% 的完美非對稱防誤觸邊距
 st.markdown("""
     <style>
     .block-container {
@@ -139,25 +138,57 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
         return {'closes': c_c, 'ts': c_ts, 'price': live_price, 'name': official_name, 'symbol': meta.get('symbol')}
     except: return None
 
-# 💡 新增：穩定的財務與營收抓取引擎
+# 💡 核心修復：雙引擎財報解鎖器 (破除 401 阻擋)
 @st.cache_data(ttl=3600)
 def get_revenue_info(symbol):
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=financialData"
-    try:
-        res = requests.get(url, headers=headers, timeout=5).json()
-        fin_data = res.get('quoteSummary', {}).get('result', [{}])[0].get('financialData', {})
-        
-        return {
-            'total_revenue': fin_data.get('totalRevenue', {}).get('fmt', '無資料'),
-            'revenue_growth': fin_data.get('revenueGrowth', {}).get('fmt', '無資料'),
-            'gross_margin': fin_data.get('grossMargins', {}).get('fmt', '無資料'),
-            'profit_margin': fin_data.get('profitMargins', {}).get('fmt', '無資料')
-        }
-    except:
-        return None
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    
+    # 引擎 A：針對台灣股市，呼叫本土無防護 API
+    if symbol.endswith('.TW') or symbol.endswith('.TWO') or symbol.endswith('.TE'):
+        try:
+            m_url = f"https://tw.stock.yahoo.com/_td-stock/api/resource/StockServices.margins;symbol={symbol}"
+            m_res = requests.get(m_url, headers=headers, timeout=5).json()
+            m_data = m_res.get('ResultSet', {}).get('Result', [])[0] if m_res.get('ResultSet', {}).get('Result') else {}
+            
+            r_url = f"https://tw.stock.yahoo.com/_td-stock/api/resource/StockServices.revenues;symbol={symbol}"
+            r_res = requests.get(r_url, headers=headers, timeout=5).json()
+            r_data = r_res.get('ResultSet', {}).get('Result', [])[0] if r_res.get('ResultSet', {}).get('Result') else {}
+            
+            rev_val = r_data.get('Revenue')
+            if rev_val:
+                rev_yi = float(rev_val) / 100000 # 台股資料為千元，換算為億
+                rev_str = f"{rev_yi:,.2f} 億"
+            else: 
+                rev_str = "無資料"
+            
+            return {
+                'total_revenue': f"{rev_str} (最新單月:{r_data.get('Date', '')[:7]})",
+                'revenue_growth': f"{r_data.get('YoY')}%" if r_data.get('YoY') else "無資料",
+                'gross_margin': f"{m_data.get('GrossMargin')}%" if m_data.get('GrossMargin') else "無資料",
+                'profit_margin': f"{m_data.get('NetIncomeMargin')}%" if m_data.get('NetIncomeMargin') else "無資料"
+            }
+        except: pass
 
-# 💡 保留：Google 新聞引擎
+    # 引擎 B：針對美股/備援，使用 Cookie + Crumb 穿透技術
+    try:
+        session = requests.Session()
+        session.headers.update(headers)
+        session.get('https://fc.yahoo.com', timeout=5) # 取得授權 Cookie
+        crumb = session.get('https://query1.finance.yahoo.com/v1/test/getcrumb', timeout=5).text # 取得鑰匙
+        
+        url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=financialData&crumb={crumb}"
+        res = session.get(url, timeout=5)
+        if res.status_code == 200:
+            fin = res.json().get('quoteSummary', {}).get('result', [{}])[0].get('financialData', {})
+            return {
+                'total_revenue': fin.get('totalRevenue', {}).get('fmt', '無資料'),
+                'revenue_growth': f"{fin.get('revenueGrowth', {}).get('raw', 0)*100:.2f}%" if fin.get('revenueGrowth', {}).get('raw') else "無資料",
+                'gross_margin': f"{fin.get('grossMargins', {}).get('raw', 0)*100:.2f}%" if fin.get('grossMargins', {}).get('raw') else "無資料",
+                'profit_margin': f"{fin.get('profitMargins', {}).get('raw', 0)*100:.2f}%" if fin.get('profitMargins', {}).get('raw') else "無資料"
+            }
+    except: pass
+    return None
+
 @st.cache_data(ttl=300)
 def get_stock_news(name):
     news = []
@@ -198,7 +229,7 @@ def generate_detailed_report(res_score, rsi, roi, cost, is_stock_held):
     report = "#### 🧭 1. 多週期趨勢診斷\n"
     if res_score == 3: report += "目前**月線、週線、日線的 MACD 動能皆同步向上**（共振得分 3 分）。大中小級別資金達成共識，具備高爆發力的「主升段」特徵，趨勢延續性強。\n\n"
     elif res_score == 2: report += "目前共振得分為 2 分，顯示**長短週期動能出現分歧**。此為長線保護短線的「良性回檔」，或短線轉強但長線未跟上的「打底階段」，走勢易震盪。\n\n"
-    elif res_score == 1: report += "目前共振得分僅 1 分，代表**僅有單一短週期轉強**。整體大趨勢依然偏空，上漲極可能是「弱勢反彈」，需高度提防假突破。\n\n"
+    elif res_score == 1: report += "目前共振得分僅 1 分，代表**僅有單一短週期轉強**。整體大趨勢依然偏空，上漲極可能是「弱勢反彈」，需高度提提防假突破。\n\n"
     else: report += "目前**月、週、日線動能全面向下**（共振得分 0 分）。市場處於「空頭排列」，賣壓沉重且趨勢未見底，屬於左側高風險區。\n\n"
 
     report += "#### ⚡ 2. 動能與風險水位 (RSI 指標)\n"
@@ -339,23 +370,23 @@ if stock_input:
         st.table(table_df)
 
         # ==========================================
-        # 💰 新增：基本面營收與財務資訊
+        # 💰 財務與營收資訊區塊
         # ==========================================
         st.divider()
-        st.subheader(f"💰 {final_name} 最新財務與營收資訊 (TTM)")
+        st.subheader(f"💰 {final_name} 最新營收與獲利指標")
         
         rev_data = get_revenue_info(d_data['symbol'])
         if rev_data:
             rc1, rc2, rc3, rc4 = st.columns(4)
-            rc1.metric("總營收 (近12個月)", rev_data['total_revenue'])
+            rc1.metric("最新營收規模", rev_data['total_revenue'])
             rc2.metric("營收年增率", rev_data['revenue_growth'])
             rc3.metric("毛利率", rev_data['gross_margin'])
             rc4.metric("淨利率", rev_data['profit_margin'])
         else:
-            st.info("目前雲端伺服器暫無該標的之即時財務數據。")
+            st.info("目前雲端伺服器暫無該標的之即時財務數據，或遭受到 API 存取限制。")
 
         # ==========================================
-        # 📰 保留：即時市場新聞區塊 (Google 新聞引擎)
+        # 📰 即時市場新聞區塊
         # ==========================================
         st.divider()
         st.subheader(f"📰 {final_name} 最新市場新聞")
@@ -369,7 +400,6 @@ if stock_input:
                 st.write("") 
         else:
             st.info("目前雲端伺服器未返回相關新聞，或該標的近期無重大新聞發布。")
-            st.markdown(f"[👉 點我直接前往 Yahoo 奇摩股市查看 {final_name} 最新動態](https://tw.stock.yahoo.com/quote/{d_data['symbol']})")
 
     else:
         st.error(f"❌ 查無「{stock_input}」的數據，請檢查名稱或代碼。")
