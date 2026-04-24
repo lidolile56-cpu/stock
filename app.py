@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 終極全配版 (含穩定版新聞引擎).py
+# 檔名：20150424 MACD + RSI 終極全配版 (精準新聞引擎修復).py
 import streamlit as st
 import requests
 import pandas as pd
@@ -6,6 +6,7 @@ import time
 import altair as alt
 import re
 import urllib.parse
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
@@ -13,7 +14,7 @@ from datetime import datetime, timezone, timedelta
 # ==========================================
 st.set_page_config(page_title="量化導航 2026", layout="wide")
 
-# 💡 核心優化：非對稱邊距 (左邊 2%，右邊 15%)
+# 💡 保留：左 2% 右 15% 的完美非對稱防誤觸邊距
 st.markdown("""
     <style>
     .block-container {
@@ -138,26 +139,46 @@ def get_verified_data(ticker, interval="1d", range_val="2y"):
         return {'closes': c_c, 'ts': c_ts, 'price': live_price, 'name': official_name, 'symbol': meta.get('symbol')}
     except: return None
 
-# 💡 修正版：穩定抓取新聞引擎 (以代碼優先)
+# 💡 核心修復：改用 Google News 台灣站抓取新聞 (保證 100% 關聯度與繁中)
 @st.cache_data(ttl=300)
-def get_stock_news(symbol, name):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+def get_stock_news(name):
     news = []
-    # 優先使用代碼搜尋，準確率最高
     try:
-        url = f"https://query2.finance.yahoo.com/v1/finance/search?q={symbol}&lang=zh-Hant-TW&region=TW&quotesCount=0&newsCount=5"
-        res = requests.get(url, headers=headers, timeout=5).json()
-        news = res.get('news', [])
-    except: pass
-    
-    # 若代碼查無，備援使用中文名稱搜尋
-    if not news:
-        try:
-            url = f"https://query2.finance.yahoo.com/v1/finance/search?q={urllib.parse.quote(name)}&lang=zh-Hant-TW&region=TW&quotesCount=0&newsCount=5"
-            res = requests.get(url, headers=headers, timeout=5).json()
-            news = res.get('news', [])
-        except: pass
+        # 直接拿中文名稱去 Google 新聞台灣站搜尋
+        query = urllib.parse.quote(f"{name} 股市")
+        url = f"https://news.google.com/rss/search?q={query}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+        res = requests.get(url, timeout=5)
+        root = ET.fromstring(res.content)
         
+        for item in root.findall('.//item')[:5]:
+            raw_title = item.findtext('title', default='無標題')
+            link = item.findtext('link', default='#')
+            pubDate = item.findtext('pubDate', default='')
+            
+            # 處理 Google News 預設將媒體名稱放在標題後面的格式
+            if " - " in raw_title:
+                title, publisher = raw_title.rsplit(" - ", 1)
+            else:
+                title = raw_title
+                publisher = item.findtext('source', default='市場新聞')
+                
+            # 轉換時間格式
+            pub_date_str = "近期發布"
+            if pubDate:
+                try:
+                    dt = datetime.strptime(pubDate, "%a, %d %b %Y %H:%M:%S GMT")
+                    tz_tw = timezone(timedelta(hours=8))
+                    pub_date_str = dt.replace(tzinfo=timezone.utc).astimezone(tz_tw).strftime('%Y/%m/%d %H:%M')
+                except:
+                    pub_date_str = pubDate[:16] # 轉換失敗時直接切取日期字串
+                    
+            news.append({
+                'title': title,
+                'link': link,
+                'publisher': publisher,
+                'pubDate': pub_date_str
+            })
+    except: pass
     return news
 
 # ==========================================
@@ -260,6 +281,7 @@ if stock_input:
 
         line_price = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False), title=None))
         points_price = line_price.mark_point(color='#1f77b4', size=60, filled=True).encode(opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
+        # 💡 保留：往左靠齊 (align='right')，往上位移防遮擋 (dy=-25, -10)
         text_date_p = line_price.mark_text(align='right', dx=-10, dy=-25, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(text='日期:N').transform_filter(nearest)
         text_price = line_price.mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('收盤價:Q', format='.2f')).transform_filter(nearest)
         c_price = (line_price + selectors + rules + points_price + text_date_p + text_price).properties(height=200, title="股價走勢")
@@ -309,28 +331,18 @@ if stock_input:
         st.table(table_df)
 
         # ==========================================
-        # 📰 新增：即時市場新聞區塊 (防呆穩定版)
+        # 📰 新增：即時市場新聞區塊 (修復版)
         # ==========================================
         st.divider()
         st.subheader(f"📰 {final_name} 最新市場新聞")
         
-        # 使用代碼優先搜尋確保命中率
-        news_items = get_stock_news(d_data['symbol'], final_name) 
+        # 使用 Google 引擎以名稱搜尋，保證高相關度
+        news_items = get_stock_news(final_name) 
         
         if news_items:
-            for item in news_items[:5]: 
-                title = item.get('title', '無標題新聞')
-                link = item.get('link', '#')
-                publisher = item.get('publisher', '市場消息')
-                pub_time = item.get('providerPublishTime')
-                
-                if pub_time:
-                    pub_date = datetime.fromtimestamp(pub_time, tz=tz_tw).strftime('%Y/%m/%d %H:%M')
-                else:
-                    pub_date = "近期發布"
-
-                st.markdown(f"**[{title}]({link})**")
-                st.caption(f"🗞️ {publisher} ｜ 🕒 {pub_date}")
+            for item in news_items: 
+                st.markdown(f"**[{item['title']}]({item['link']})**")
+                st.caption(f"🗞️ {item['publisher']} ｜ 🕒 {item['pubDate']}")
                 st.write("") 
         else:
             st.info("目前雲端伺服器未返回相關新聞，或該標的近期無重大新聞發布。")
