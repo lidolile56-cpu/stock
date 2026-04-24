@@ -1,4 +1,4 @@
-# 檔名：20150424 MACD + RSI 終極全配穩定版.py
+# 檔名：app.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -12,8 +12,9 @@ from datetime import datetime, timezone, timedelta
 # ==========================================
 # 🚀 網頁基本設定與 CSS 非對稱邊界優化
 # ==========================================
-st.set_page_config(page_title="量化導航 2026", layout="wide")
+st.set_page_config(page_title="持股分析系統 2026", layout="wide")
 
+# 💡 核心佈局：左 2% 右 15% 的完美非對稱防誤觸邊距
 st.markdown("""
     <style>
     .block-container {
@@ -28,6 +29,10 @@ st.markdown("""
     }
     a:hover {
         text-decoration: underline !important;
+    }
+    /* 調整表格字體大小適合手機閱讀 */
+    .stTable {
+        font-size: 14px !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -68,7 +73,7 @@ def calculate_rsi(closes, period=14):
     return rsi_series
 
 # ==========================================
-# 🌐 第二部分：雙向反查搜尋與新聞引擎
+# 🌐 第二部分：數據採集引擎 (搜尋 + K線 + 新聞)
 # ==========================================
 def search_ticker(query):
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -78,7 +83,7 @@ def search_ticker(query):
         results = res.get('ResultSet', {}).get('Result', [])
         for r in results:
             sym = r.get('symbol', '')
-            if sym.endswith('.TW') or sym.endswith('.TWO') or sym.endswith('.TE'): return sym, r.get('name')
+            if sym.endswith(('.TW', '.TWO', '.TE')): return sym, r.get('name')
         if results: return results[0].get('symbol'), results[0].get('name')
     except: pass
     
@@ -93,9 +98,6 @@ def search_ticker(query):
                 elif stype == 'tpex': return f"{sid}.TWO", sname
                 elif stype == 'emerging': return f"{sid}.TE", sname
     except: pass
-
-    fallback = {"光洋科": "3276.TWO", "鈊象": "3293.TWO", "星宇航空": "2646.TW"}
-    if query in fallback: return fallback[query], query
     return None, None
 
 @st.cache_data(ttl=10)
@@ -152,7 +154,7 @@ def get_stock_news(name):
     return news
 
 # ==========================================
-# 🧠 第三部分：深度診斷生成器 
+# 🧠 第三部分：深度診斷生成器
 # ==========================================
 def generate_detailed_report(res_score, rsi, roi, cost, is_held):
     report = "#### 🧭 1. 多週期趨勢診斷\n"
@@ -162,43 +164,46 @@ def generate_detailed_report(res_score, rsi, roi, cost, is_held):
     else: report += "動能全面向下（0 分）。處於**空頭排列**，賣壓沉重且尚未見底，屬高風險區。\n\n"
     
     report += "#### ⚡ 2. 動能與風險水位 (RSI)\n"
-    if rsi >= 80: report += f"RSI **{rsi:.1f}** 進入**「極度超買區」**。市場狂熱，追高風險大，隨時有獲利了結壓力。\n\n"
-    elif rsi >= 50: report += f"RSI **{rsi:.1f}** 處於**「多方優勢區」**。買盤強於賣盤，動能健康，具上攻潛力。\n\n"
-    else: report += f"RSI **{rsi:.1f}** 處於偏弱區間。反彈易遇反壓，需等待突破 50 重新轉強。\n\n"
+    if rsi >= 80: report += f"當前 RSI 為 **{rsi:.1f}**，進入**「極度超買區」**。市場情緒極度狂熱，追高風險大，隨時面臨獲利了結壓力。\n\n"
+    elif rsi >= 50: report += f"當前 RSI 為 **{rsi:.1f}**，穩居 **「多方優勢區」**。買盤強於賣盤，短期動能健康，尚未過熱。\n\n"
+    else: report += f"當前 RSI 為 **{rsi:.1f}**，處於偏弱狀態。反彈易遇反壓，需等待突破 50 重新轉強。\n\n"
     
-    report += "#### 🎯 3. 綜合實戰策略\n"
+    report += "#### 🎯 3. 綜合實戰策略建議\n"
     if is_held:
-        if roi < -0.07: report += f"> 🛑 **【執行止損】**：虧損已達 {roi:.2%}，觸及停損線，建議優先回收資金。\n"
-        elif res_score == 3 and rsi < 80: report += "> ✅ **【持股續抱】**：趨勢強勁且未過熱，讓獲利奔跑，守住移動停利點。\n"
-        else: report += "> 🔎 **【守好防線】**：多空交戰，建議依據成本價嚴守支撐，觀望趨勢明朗。\n"
+        if roi < -0.07: report += f"> 🛑 **【執行止損】**：目前虧損已達 {roi:.2%}，觸及 7% 停損紀律線，建議回收資金避免深套。\n"
+        elif res_score == 3 and rsi < 80: report += "> ✅ **【持股續抱】**：趨勢強勁且未見過熱，讓獲利奔跑，守住移動停利點即可。\n"
+        else: report += "> 🔎 **【守好防線】**：多空動能分歧，建議依據持股成本嚴守支撐，觀望趨勢明朗。\n"
     else:
-        report += "> 💡 **【空手觀察】**："
-        if res_score == 3 and rsi < 80: report += "趨勢向上，可待股價回測均線後伺機佈局。"
-        else: report += "方向不明或風險過高，建議等待共振得分提升後再進場。"
+        report += "> 💡 **【空手觀察中】**："
+        if res_score == 3 and rsi < 80: report += "趨勢明確向上，可尋找股價回測均線時伺機佈局。"
+        else: report += "方向混沌或風險過高，建議等待共振得分提升或 RSI 回落後再行評估。"
     return report
 
 # ==========================================
-# 🚀 第四部分：網頁介面佈局
+# 🚀 第四部分：介面與圖表渲染
 # ==========================================
-st.title("🌍 全球量化導航系統")
+st.title("🌍 持股分析系統")
 st.markdown("---")
 search_col, cost_col = st.columns([3, 1])
-with search_col: stock_input = st.text_input("🔍 名稱/代碼", value="", placeholder="輸入個股名稱或股號 (例: 台積電, 3293)").strip()
-with cost_col: cost_input = st.number_input("💰 持有成本", value=0.0)
+with search_col:
+    stock_input = st.text_input("🔍 名稱/代碼", value="", placeholder="輸入個股名稱或代碼 (例: 台積電, 3293)").strip()
+with cost_col:
+    cost_input = st.number_input("💰 持有成本", value=0.0)
 st.markdown("---")
 
 if stock_input:
     d_data = None
-    with st.spinner(f'正在掃描數據與新聞...'):
+    with st.spinner(f'正在同步雲端數據與即時新聞...'):
         symbol, display_name = search_ticker(stock_input)
         if not symbol: symbol, display_name = stock_input.upper(), stock_input.upper()
         
-        tickers = [symbol]
+        # 嘗試對應台灣後綴
+        tickers_to_try = [symbol]
         if symbol.split('.')[0].isdigit():
             for sfx in ['.TW', '.TWO', '.TE']:
-                if f"{symbol.split('.')[0]}{sfx}" not in tickers: tickers.append(f"{symbol.split('.')[0]}{sfx}")
+                if f"{symbol.split('.')[0]}{sfx}" not in tickers_to_try: tickers_to_try.append(f"{symbol.split('.')[0]}{sfx}")
         
-        for t in tickers:
+        for t in tickers_to_try:
             d_data = get_verified_data(t, "1d", "2y")
             if d_data:
                 wk_data = get_verified_data(t, "1wk", "max")
@@ -209,13 +214,15 @@ if stock_input:
         tz = timezone(timedelta(hours=8))
         is_tw = d_data['symbol'].endswith(('.TW', '.TWO', '.TE'))
         final_name = display_name if re.search(r'[\u4e00-\u9fff]', str(display_name)) else d_data['name']
-        st.success(f"✅ 標的：{final_name} ({d_data['symbol']}) ｜ {datetime.now(tz).strftime('%Y/%m/%d %H:%M')}")
+        st.success(f"✅ 成功對位標的：{final_name} ({d_data['symbol']})")
         
+        # 數據準備
         full_dates = [datetime.fromtimestamp(t, tz=tz).strftime('%Y/%m/%d') for t in d_data['ts']]
         dif, dea, hist = perform_macd_full(d_data['closes'], is_tw)
         rsi_vals = calculate_rsi(d_data['closes'])
         source = pd.DataFrame({'日期': full_dates, '收盤價': d_data['closes'], 'MACD柱狀': hist, 'RSI': rsi_vals}).drop_duplicates(subset=['日期'])
 
+        # 💡 行動互動核心：莫蘭迪黃標籤 + 左側上方對齊
         nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
         x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
         morandi_yellow = '#CBAE73'
@@ -223,40 +230,45 @@ if stock_input:
         selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
         rules = alt.Chart(source).mark_rule(color='gray', strokeDash=[3,3]).encode(x=x_axis).transform_filter(nearest)
 
+        # 1. 價格圖
         line_p = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False), title=None))
         pts_p = line_p.mark_point(color='#1f77b4', size=60, filled=True).encode(opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
         txt_d_p = line_p.mark_text(align='right', dx=-10, dy=-25, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(text='日期:N').transform_filter(nearest)
         txt_v_p = line_p.mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('收盤價:Q', format='.2f')).transform_filter(nearest)
         c_p = (line_p + selectors + rules + pts_p + txt_d_p + txt_v_p).properties(height=200, title="股價走勢")
 
+        # 2. MACD 圖
         bar_m = alt.Chart(source).mark_bar().encode(x=x_axis, y=alt.Y('MACD柱狀', title=None), color=alt.condition(alt.datum['MACD柱狀'] > 0, alt.value('#ff4b4b'), alt.value('#00cc96')))
         txt_v_m = alt.Chart(source).mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(x=x_axis, y=alt.Y('MACD柱狀'), text=alt.Text('MACD柱狀:Q', format='.3f')).transform_filter(nearest)
         c_m = (bar_m + selectors + rules + txt_v_m).properties(height=150, title="MACD 動能")
 
+        # 3. RSI 圖
         line_r = alt.Chart(source).mark_line(color='#9467bd', strokeWidth=2).encode(x=x_axis, y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None))
         txt_v_r = line_r.mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
         c_r = (line_r + selectors + rules + txt_v_r).properties(height=150, title="RSI (14)")
 
         st.altair_chart(alt.vconcat(c_p, c_m, c_r).resolve_scale(x='shared'), use_container_width=True)
 
+        # 診斷報告
         st.divider()
-        st.subheader(f"💡 {final_name} 深度量化診斷")
-        h_up = hist[-1] > hist[-2] if hist else False
+        st.subheader(f"💡 {final_name} 深度量化診斷報告")
+        h_up = hist[-1] > hist[-2] if len(hist)>1 else False
         _, _, h_w = perform_macd_full(wk_data['closes'], is_tw) if wk_data else (0,0,[0,0])
         _, _, h_m = perform_macd_full(mo_data['closes'], is_tw) if mo_data else (0,0,[0,0])
         score = sum([h_up, (len(h_w)>1 and h_w[-1]>h_w[-2]), (len(h_m)>1 and h_m[-1]>h_m[-2])])
         
         m1, m2, m3 = st.columns(3)
-        m1.metric("當前價位", f"${d_data['price']}")
+        m1.metric("當前成交價", f"${d_data['price']}")
         roi = (d_data['price'] - cost_input) / cost_input if cost_input > 0 else 0
-        m2.metric("損益/持有", f"{roi:+.2%}" if cost_input > 0 else "空手觀望")
+        m2.metric("即時損益率", f"{roi:+.2%}" if cost_input > 0 else "空手觀望")
         m3.metric("共振得分", f"{score} 分")
         
         st.markdown(generate_detailed_report(score, rsi_vals[-1], roi, cost_input, cost_input > 0))
 
-        st.subheader("📅 近 5 日量化軌跡")
+        st.subheader("📅 近 5 個交易日軌跡")
         st.table(source.tail(5))
 
+        # 即時新聞
         st.divider()
         st.subheader(f"📰 {final_name} 最新市場新聞")
         news = get_stock_news(final_name)
@@ -265,6 +277,7 @@ if stock_input:
                 st.markdown(f"**[{n['title']}]({n['link']})**")
                 st.caption(f"🗞️ {n['publisher']} ｜ 🕒 {n['pubDate']}")
                 st.write("")
-        else: st.info("近期無相關新聞報導。")
-    else: st.error(f"❌ 無法讀取「{stock_input}」的數據。")
-else: st.info("💡 請在上方輸入股票名稱或代號開始分析。")
+        else: st.info("近期暫無相關新聞報導。")
+        
+    else: st.error(f"❌ 查無「{stock_input}」的數據，請確認名稱或代碼是否正確。")
+else: st.info("💡 請在上方輸入個股名稱或代號（例：2330 或 台積電）以開始分析。")
