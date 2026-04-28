@@ -1,4 +1,4 @@
-# 檔名：20260428_持股分析系統_詳盡報告優化版.py
+# 檔名：20260428_持股分析系統_全圖表互動版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -145,44 +145,41 @@ def generate_pro_report(df, res_score, rsi, k, d, f, s, r, cost_input):
     
     report = "### 📊 量化與籌碼綜合診斷\n\n"
     
-    # --- 籌碼面解密 ---
     report += "#### 💰 【籌碼面解密】 (50 為多空分水嶺)\n"
-    report += f"- 🟦 **外資動能 ({f:.1f})**：代表大型法人的資金流向。**> 50 代表資金淨流入**。目前數值顯示外資處於{'偏向買方' if f > 50 else '偏向賣方或觀望'}的狀態。\n"
-    report += f"- 🟩 **投信動能 ({s:.1f})**：代表內資作帳力道，數值越高表示「連續買超」的企圖越強。目前數值顯示投信{'正積極介入' if s > 50 else '未見明顯連續買盤'}。\n"
-    report += f"- 🟥 **散戶熱度 ({r:.1f})**：通常為反向指標。**> 50 意味著籌碼正在流向散戶**，主力可能在出貨；目前顯示籌碼{'趨於凌亂，需警惕' if r > 50 else '相對安定，有利上攻'}。\n\n"
+    report += f"- 🟦 **外資動能 ({f:.1f})**：代表大型法人的資金流向。**> 50 代表資金淨流入**。目前顯示外資處於{'偏向買方' if f > 50 else '偏向賣方或觀望'}。\n"
+    report += f"- 🟧 **投信動能 ({s:.1f})**：代表內資作帳力道。數值越高表示「連續買超」企圖越強。目前顯示投信{'正積極介入' if s > 50 else '未見明顯連續買盤'}。\n"
+    report += f"- 🟥 **散戶熱度 ({r:.1f})**：反向指標。**> 50 意味著籌碼流向散戶**，主力可能在出貨；目前顯示籌碼{'趨於凌亂，需警惕' if r > 50 else '相對安定，有利上攻'}。\n\n"
 
     if f > 60 and s > 60: report += "> 💡 **籌碼總結**：🚀 **土洋合作**。外資與投信同步站在買方，多頭動能極強，為最安全的上漲結構。\n\n"
     elif f < 40 and s < 40: report += "> 💡 **籌碼總結**：⛈️ **主力撤退**。法人同步減碼，僅剩散戶熱度支撐，強烈建議提防高檔反轉。\n\n"
     elif s > 65: report += "> 💡 **籌碼總結**：🔥 **投信認養**。投信資金高度集中，該標的具備作帳潛力。\n\n"
     else: report += "> 💡 **籌碼總結**：⚖️ **區間換手**。目前各方勢力相互抗衡，無單一壓倒性力量。\n\n"
 
-    # --- 技術面解密 ---
     report += "#### 📈 【技術面解密】\n"
-    report += f"- **MACD 共振得分 ({res_score}/3 分)**：分數代表短、中、長期的均線方向。**3 分為完美多頭**，0 分為空頭。目前獲得 **{res_score} 分**。\n"
-    report += f"- **RSI 動能 ({rsi:.1f})**：衡量買賣雙方力道。**> 50 為多方強勢**，> 80 則有過熱回檔風險。目前數值為 **{rsi:.1f}**。\n"
-    report += f"- **KD 指標 (K:{k:.1f} / D:{d:.1f})**：捕捉極短線的價格轉折。"
+    report += f"- **MACD 共振 ({res_score}/3 分)**：分數代表短中長期均線方向。**3分為完美多頭**，目前為 **{res_score} 分**。\n"
+    report += f"- **RSI 動能 ({rsi:.1f})**：衡量買賣力道。**> 50 為多方強勢**，> 80 有過熱風險。目前為 **{rsi:.1f}**。\n"
+    report += f"- **KD 指標 (K:{k:.1f} / D:{d:.1f})**：捕捉極短線轉折。"
     if k > 80 and d > 80: report += "目前處於 **高檔鈍化**，強勢股可能繼續軋空，但追高風險極大。\n\n"
     elif k < 20 and d < 20: report += "目前處於 **低檔超賣**，賣壓宣洩完畢，隨時醞釀反彈。\n\n"
     elif k > d and (k - d) > 3: report += "呈現 **黃金交叉 (K穿過D向上)**，短線動能轉強。\n\n"
     elif k < d and (d - k) > 3: report += "呈現 **死亡交叉 (K跌破D向下)**，短線有回檔修正壓力。\n\n"
     else: report += "目前雙線糾結，短線方向尚未明朗。\n\n"
 
-    # --- 防線與策略 ---
     report += "#### 🛡️ 【防線與實戰策略】\n"
-    report += f"- **短線壓力位：{r1:.2f}** (若放量突破此價位，上方上漲空間將被打開)\n"
+    report += f"- **短線壓力位：{r1:.2f}** (若放量突破此價位，上方空間將被打開)\n"
     report += f"- **關鍵支撐位：{s1:.2f}** (強勢股回測不應跌破的防守底線)\n\n"
     
     if cost_input > 0:
-        if last_p < s1: report += f"> 🎯 **操作策略**：股價已跌破支撐 **{s1:.2f}**，且若技術指標未見起色，建議嚴格執行停損或降低部位避險。"
-        elif res_score >= 2 and f > 50: report += f"> 🎯 **操作策略**：趨勢及籌碼結構皆健康，建議持股續抱，以支撐價位 **{s1:.2f}** 作為移動停利點。"
-        else: report += "> 🎯 **操作策略**：盤勢處於震盪，建議維持既有倉位，觀望後市方向突破。"
+        if last_p < s1: report += f"> 🎯 **策略**：股價已跌破支撐 **{s1:.2f}**，若指標未見起色，建議嚴格停損或降低部位。"
+        elif res_score >= 2 and f > 50: report += f"> 🎯 **策略**：趨勢及籌碼皆健康，建議持股續抱，以支撐價 **{s1:.2f}** 作為移動停利點。"
+        else: report += "> 🎯 **策略**：盤勢震盪，建議維持既有倉位，觀望後市方向突破。"
     else:
-        report += "> 🎯 **空手觀望**：若欲進場，建議等待股價拉回至支撐位附近量縮測試不破時，再行分批佈局。"
+        report += "> 🎯 **空手觀望**：建議等待股價拉回至支撐位附近量縮測試不破時，再行分批佈局。"
         
     return report
 
 # ==========================================
-# 🚀 第四部分：主介面與圖表渲染
+# 🚀 第四部分：主介面與全圖表互動渲染
 # ==========================================
 st.title("🌍 持股分析系統 PRO")
 st.markdown("---")
@@ -206,7 +203,7 @@ if stock_input:
             rsi_vals = calculate_rsi(df['close'].tolist())
             k_vals, d_vals = calculate_kd(df['high'].tolist(), df['low'].tolist(), df['close'].tolist())
             
-            # 強制陣列長度對齊機制
+            # 強制陣列長度對齊
             target_len = len(df)
             def align_len(arr, pad_val=0):
                 arr = list(arr)
@@ -225,15 +222,11 @@ if stock_input:
             source = pd.DataFrame({
                 '日期': [datetime.fromtimestamp(t, tz=tz).strftime('%Y/%m/%d') for t in df['ts']],
                 '收盤價': df['close'].values,
-                '外資': aligned_f, 
-                '投信': aligned_s, 
-                '散戶': aligned_r,
-                'MACD': aligned_hist, 
-                'RSI': aligned_rsi, 
-                'K': aligned_k, 
-                'D': aligned_d
+                '外資': aligned_f, '投信': aligned_s, '散戶': aligned_r,
+                'MACD': aligned_hist, 'RSI': aligned_rsi, 'K': aligned_k, 'D': aligned_d
             }).drop_duplicates(subset=['日期'])
 
+            # 💡 核心互動：全域共用的游標選擇器與對齊線
             morandi_yellow = '#CBAE73'
             nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
             x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
@@ -241,45 +234,52 @@ if stock_input:
             rules = alt.Chart(source).mark_rule(color='gray', strokeDash=[3,3]).encode(x=x_axis).transform_filter(nearest)
             
             # 1. 價格圖
-            line_p = alt.Chart(source).mark_line(color='#1f77b4').encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False)))
+            line_p = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False)))
             txt_d = line_p.mark_text(align='right', dx=-10, dy=-25, color=morandi_yellow, fontWeight='bold').encode(text='日期:N').transform_filter(nearest)
             txt_v = line_p.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold').encode(text=alt.Text('收盤價:Q', format='.2f')).transform_filter(nearest)
-            c_price = (line_p + txt_d + txt_v).add_params(nearest).properties(height=200, title="股價走勢")
+            c_price = (line_p + selectors + rules + txt_d + txt_v).properties(height=200, title="股價走勢")
 
-            # 2. 三大勢力籌碼圖 (明確設定圖例顏色)
-            chip_melt = source.melt('日期', value_vars=['外資', '投信', '散戶'], var_name='勢力', value_name='力道')
-            c_chip = alt.Chart(chip_melt).mark_line(strokeWidth=2).encode(
-                x=x_axis, 
-                y=alt.Y('力道', scale=alt.Scale(domain=[0, 100]), title=None), 
-                color=alt.Color(
-                    '勢力:N', 
-                    scale=alt.Scale(domain=['外資', '投信', '散戶'], range=['#1f77b4', '#2ca02c', '#d62728']),
-                    legend=alt.Legend(title="三大勢力 (點擊看數值)", orient="top-left", titleFontSize=12, labelFontSize=12)
-                )
-            ).properties(height=150, title="籌碼動向 (🟦外資 / 🟩投信 / 🟥散戶)")
+            # 2. 外資圖 (🟦 實線)
+            line_f = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('外資', scale=alt.Scale(domain=[0, 100]), title=None))
+            txt_f = line_f.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(text=alt.Text('外資:Q', format='.1f')).transform_filter(nearest)
+            c_f = (line_f + selectors + rules + txt_f).properties(height=80, title="🟦 外資動向 (實線)")
 
-            # 3. MACD 動能圖
-            c_macd = alt.Chart(source).mark_bar().encode(
+            # 3. 投信圖 (🟧 虛線)
+            line_s = alt.Chart(source).mark_line(color='#ff7f0e', strokeWidth=2, strokeDash=[5,5]).encode(x=x_axis, y=alt.Y('投信', scale=alt.Scale(domain=[0, 100]), title=None))
+            txt_s = line_s.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(text=alt.Text('投信:Q', format='.1f')).transform_filter(nearest)
+            c_s = (line_s + selectors + rules + txt_s).properties(height=80, title="🟧 投信動向 (虛線)")
+
+            # 4. 散戶圖 (🟥 點線)
+            line_r = alt.Chart(source).mark_line(color='#d62728', strokeWidth=2, strokeDash=[2,2]).encode(x=x_axis, y=alt.Y('散戶', scale=alt.Scale(domain=[0, 100]), title=None))
+            txt_r_chip = line_r.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(text=alt.Text('散戶:Q', format='.1f')).transform_filter(nearest)
+            c_r_chip = (line_r + selectors + rules + txt_r_chip).properties(height=80, title="🟥 散戶動向 (點線)")
+
+            # 5. MACD 圖
+            bar_m = alt.Chart(source).mark_bar().encode(
                 x=x_axis, y=alt.Y('MACD', title=None), 
                 color=alt.condition(alt.datum.MACD > 0, alt.value('#ff4b4b'), alt.value('#00cc96'))
-            ).properties(height=100, title="MACD 動能")
+            )
+            txt_m = alt.Chart(source).mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(x=x_axis, y='MACD', text=alt.Text('MACD:Q', format='.3f')).transform_filter(nearest)
+            c_macd = (bar_m + selectors + rules + txt_m).properties(height=100, title="MACD 動能")
 
-            # 4. KD 指標圖
+            # 6. KD 指標圖 (強制獨立圖例)
             kd_melt = source.melt('日期', value_vars=['K', 'D'], var_name='指標', value_name='數值')
             line_kd = alt.Chart(kd_melt).mark_line(strokeWidth=2).encode(
                 x=x_axis, y=alt.Y('數值', scale=alt.Scale(domain=[0, 100]), title=None),
-                color=alt.Color('指標:N', scale=alt.Scale(domain=['K', 'D'], range=['#ff7f0e', '#9467bd']), legend=alt.Legend(orient="top-left"))
+                color=alt.Color('指標:N', scale=alt.Scale(domain=['K', 'D'], range=['#e377c2', '#17becf']), legend=alt.Legend(orient="top-left", title=None))
             )
             txt_k = alt.Chart(source).mark_text(align='right', dx=-10, dy=-25, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(x=x_axis, y='K', text=alt.Text('K:Q', format='.1f')).transform_filter(nearest)
             txt_d_kd = alt.Chart(source).mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(x=x_axis, y='D', text=alt.Text('D:Q', format='.1f')).transform_filter(nearest)
             c_kd = (line_kd + selectors + rules + txt_k + txt_d_kd).properties(height=120, title="KD 指標 (9,3,3)")
 
-            # 5. RSI 圖
-            line_r = alt.Chart(source).mark_line(color='#8c564b', strokeWidth=2).encode(x=x_axis, y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None))
-            txt_r = line_r.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold').encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
-            c_rsi = (line_r + selectors + rules + txt_r).properties(height=120, title="RSI (14)")
+            # 7. RSI 圖
+            line_rsi = alt.Chart(source).mark_line(color='#8c564b', strokeWidth=2).encode(x=x_axis, y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None))
+            txt_rsi = line_rsi.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold').encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
+            c_rsi = (line_rsi + selectors + rules + txt_rsi).properties(height=120, title="RSI (14)")
 
-            st.altair_chart(alt.vconcat(c_price, c_chip, c_macd, c_kd, c_rsi).resolve_scale(x='shared'), use_container_width=True)
+            # 垂直拼合所有圖表 (確保圖例獨立不打架)
+            final_chart = alt.vconcat(c_price, c_f, c_s, c_r_chip, c_macd, c_kd, c_rsi).resolve_scale(x='shared', color='independent')
+            st.altair_chart(final_chart, use_container_width=True)
 
             # 診斷看板
             st.divider()
@@ -291,7 +291,6 @@ if stock_input:
             roi = (df['close'].iloc[-1] - cost_input) / cost_input if cost_input > 0 else 0
             m4.metric("損益/熱度", f"{roi:+.2%}" if cost_input > 0 else f"散戶 {aligned_r[-1]:.1f}")
 
-            # 🚀 渲染加強版診斷報告
             st.markdown(generate_pro_report(df, score, aligned_rsi[-1], aligned_k[-1], aligned_d[-1], aligned_f[-1], aligned_s[-1], aligned_r[-1], cost_input))
 
             st.subheader("📅 近 5 日量化數據")
