@@ -1,4 +1,4 @@
-# 檔名：20260428_持股分析系統_防截斷完整版.py
+# 檔名：20260428_持股分析系統_極致渲染穩定版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -14,7 +14,7 @@ from datetime import datetime, timezone, timedelta
 # ==========================================
 st.set_page_config(page_title="持股分析系統 PRO", layout="wide")
 
-# 💡 核心佈局：等比例加寬左右邊界，並確保標題單行顯示
+# 💡 核心佈局：等比例加寬左右邊界，確保標題自適應
 st.markdown("""
     <style>
     .block-container { 
@@ -27,7 +27,6 @@ st.markdown("""
     .stMetric { background-color: #fcfcfc; padding: 10px; border-radius: 10px; border: 1px solid #eee; }
     .stTable { font-size: 14px !important; }
     
-    /* 確保標題絕對不換行，並隨螢幕自動縮小 */
     .responsive-title {
         white-space: nowrap;
         font-size: clamp(1.2rem, 5vw, 2.5rem);
@@ -38,7 +37,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 📊 第一部分：量化核心邏輯 (長度防錯對齊)
+# 📊 第一部分：量化核心邏輯
 # ==========================================
 def calculate_ema(data, n):
     l = len(data)
@@ -147,7 +146,6 @@ def generate_pro_report(df, res_score, rsi, k, d, cost_input):
 
     report += "#### 📈 【技術指標白話分解】\n"
     
-    # 1. MACD
     report += f"- **🎯 多週期 MACD 共振 ({res_score}/3 分)**：\n"
     report += "  - *指標意義*：結合短、中、長的均線方向。分數越高代表趨勢越一致。\n"
     if res_score == 3: report += "  - *當前診斷*：**滿分 3 分 (完美多頭)**。大中小級別方向一致，趨勢保護短線，拉回皆是買點。\n"
@@ -155,7 +153,6 @@ def generate_pro_report(df, res_score, rsi, k, d, cost_input):
     elif res_score == 1: report += "  - *當前診斷*：**1 分 (弱勢反彈)**。整體趨勢偏空，目前僅短線出現反彈訊號，需嚴防誘多陷阱。\n"
     else: report += "  - *當前診斷*：**0 分 (空頭排列)**。各週期皆呈現下跌趨勢，上方賣壓沉重，切忌隨意摸底。\n"
 
-    # 2. RSI
     report += f"\n- **🔥 RSI 相對強弱指標 ({rsi:.1f})**：\n"
     report += "  - *指標意義*：反映近期買盤與賣盤力量對比。50 為多空分水嶺。\n"
     if rsi >= 80: report += "  - *當前診斷*：**極度超買 (>80)**。市場情緒狂熱，短線隨時面臨獲利了結急跌，切忌追高。\n"
@@ -163,7 +160,6 @@ def generate_pro_report(df, res_score, rsi, k, d, cost_input):
     elif rsi >= 30: report += "  - *當前診斷*：**空方控盤 (30~50)**。股價弱勢整理，反彈易遇反壓。\n"
     else: report += "  - *當前診斷*：**極度超賣 (<30)**。恐慌情緒蔓延，短線跌幅深，隨時醞釀跌深反彈。\n"
 
-    # 3. KD
     report += f"\n- **⚡ KD 隨機指標 (K: {k:.1f} / D: {d:.1f})**：\n"
     report += "  - *指標意義*：極短線靈敏轉折指標。K 穿過 D 的方向決定短期爆發力。\n"
     if k > 80 and d > 80: report += "  - *當前診斷*：**高檔鈍化**。買盤源源不絕強勢軋空，跌破五日線前可續抱。\n"
@@ -188,7 +184,7 @@ def generate_pro_report(df, res_score, rsi, k, d, cost_input):
     return report
 
 # ==========================================
-# 🚀 第四部分：主介面與全圖表互動渲染
+# 🚀 第四部分：主介面與極致防錯圖表渲染
 # ==========================================
 st.markdown('<div class="responsive-title">🌍 持股分析系統 PRO</div>', unsafe_allow_html=True)
 st.markdown("---")
@@ -211,7 +207,6 @@ if stock_input:
             rsi_vals = calculate_rsi(df['close'].tolist())
             k_vals, d_vals = calculate_kd(df['high'].tolist(), df['low'].tolist(), df['close'].tolist())
             
-            # 強制陣列長度對齊
             target_len = len(df)
             def align_len(arr, pad_val=0):
                 arr = list(arr)
@@ -219,119 +214,54 @@ if stock_input:
                 elif len(arr) > target_len: return arr[-target_len:]
                 else: return [pad_val] * (target_len - len(arr)) + arr
 
-            aligned_hist = align_len(hist, 0)
-            aligned_rsi = align_len(rsi_vals, 50.0)
-            aligned_k = align_len(k_vals, 50.0)
-            aligned_d = align_len(d_vals, 50.0)
-
-            # 建立表格 (修復所有長度與截斷問題)
+            # 組裝完美長度的 DataFrame
             source = pd.DataFrame({
                 '日期': [datetime.fromtimestamp(t, tz=tz).strftime('%Y/%m/%d') for t in df['ts']],
                 '收盤價': df['close'].values,
-                'MACD': aligned_hist, 
-                'RSI': aligned_rsi, 
-                'K': aligned_k, 
-                'D': aligned_d
+                'MACD': align_len(hist, 0), 
+                'RSI': align_len(rsi_vals, 50.0), 
+                'K': align_len(k_vals, 50.0), 
+                'D': align_len(d_vals, 50.0)
             }).drop_duplicates(subset=['日期'])
 
             morandi_yellow = '#CBAE73'
+            
+            # 💡 核心修復：強制定義 X 軸為 Temporal (時間連續軸:T)
+            # 這能徹底解決因為 Nominal 分類軸擠爆而造成的「4個大空白」當機問題！
+            x_axis = alt.X('日期:T', axis=alt.Axis(labels=False, title=None, ticks=False))
             nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
-            x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
+            
             selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
             rules = alt.Chart(source).mark_rule(color='gray', strokeDash=[3,3]).encode(x=x_axis).transform_filter(nearest)
             
-            # 1. 價格圖 (多行拆解防斷行)
-            line_p = alt.Chart(source).mark_line(color='#1f77b4').encode(
-                x=x_axis, 
-                y=alt.Y('收盤價', scale=alt.Scale(zero=False))
-            )
-            txt_d = line_p.mark_text(
-                align='right', dx=-10, dy=-25, color=morandi_yellow, fontWeight='bold'
-            ).encode(
-                text='日期:N'
+            # 1. 價格圖
+            line_p = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('收盤價:Q', scale=alt.Scale(zero=False)))
+            txt_d = line_p.mark_text(align='right', dx=-10, dy=-25, color=morandi_yellow, fontWeight='bold').encode(
+                text=alt.Text('日期:T', timeUnit='yearmonthdate', format='%Y/%m/%d')
             ).transform_filter(nearest)
-            txt_v = line_p.mark_text(
-                align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold'
-            ).encode(
+            txt_v = line_p.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold').encode(
                 text=alt.Text('收盤價:Q', format='.2f')
             ).transform_filter(nearest)
             c_price = (line_p + selectors + rules + txt_d + txt_v).properties(height=200, title="股價走勢")
 
-            # 2. MACD 動能圖 (多行拆解防斷行)
+            # 2. MACD 動能圖
             bar_m = alt.Chart(source).mark_bar().encode(
-                x=x_axis, 
-                y=alt.Y('MACD', title=None), 
+                x=x_axis, y=alt.Y('MACD:Q', title=None), 
                 color=alt.condition(alt.datum.MACD > 0, alt.value('#ff4b4b'), alt.value('#00cc96'))
             )
-            txt_m = alt.Chart(source).mark_text(
-                align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold'
-            ).encode(
-                x=x_axis, 
-                y='MACD', 
+            txt_m = bar_m.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(
                 text=alt.Text('MACD:Q', format='.3f')
             ).transform_filter(nearest)
-            c_macd = (bar_m + selectors + rules + txt_m).properties(height=100, title="MACD 動能")
+            c_macd = (bar_m + selectors + rules + txt_m).properties(height=100, title="MACD 動能 (🔴正 / 🟢負)")
 
-            # 3. KD 指標圖 (多行拆解防斷行，圖例靠右)
-            kd_melt = source.melt('日期', value_vars=['K', 'D'], var_name='指標', value_name='數值')
-            line_kd = alt.Chart(kd_melt).mark_line(strokeWidth=2).encode(
-                x=x_axis, 
-                y=alt.Y('數值', scale=alt.Scale(domain=[0, 100]), title=None),
-                color=alt.Color('指標:N', scale=alt.Scale(domain=['K', 'D'], range=['#e377c2', '#17becf']), legend=alt.Legend(orient="right", title=None))
-            )
-            txt_k = alt.Chart(source).mark_text(
-                align='right', dx=-10, dy=-25, color=morandi_yellow, fontSize=12, fontWeight='bold'
-            ).encode(
-                x=x_axis, 
-                y='K', 
-                text=alt.Text('K:Q', format='.1f')
-            ).transform_filter(nearest)
-            txt_d_kd = alt.Chart(source).mark_text(
-                align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold'
-            ).encode(
-                x=x_axis, 
-                y='D', 
-                text=alt.Text('D:Q', format='.1f')
-            ).transform_filter(nearest)
-            c_kd = (line_kd + selectors + rules + txt_k + txt_d_kd).properties(height=120, title="KD 指標 (9,3,3)")
-
-            # 4. RSI 圖 (多行拆解防斷行)
-            line_rsi = alt.Chart(source).mark_line(color='#8c564b', strokeWidth=2).encode(
-                x=x_axis, 
-                y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None)
-            )
-            txt_rsi = line_rsi.mark_text(
-                align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold'
-            ).encode(
-                text=alt.Text('RSI:Q', format='.1f')
-            ).transform_filter(nearest)
-            c_rsi = (line_rsi + selectors + rules + txt_rsi).properties(height=120, title="RSI (14)")
-
-            # 垂直拼合圖表
-            final_chart = alt.vconcat(c_price, c_macd, c_kd, c_rsi).resolve_scale(x='shared', color='independent')
-            st.altair_chart(final_chart, use_container_width=True)
-
-            # 診斷看板
-            st.divider()
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("現價", f"${df['close'].iloc[-1]:.2f}")
-            score = sum([aligned_hist[-1] > aligned_hist[-2] if len(aligned_hist)>1 else False, aligned_rsi[-1] > 50]) + 1
-            m2.metric("共振得分", f"{score} 分")
-            m3.metric("RSI 水位", f"{aligned_rsi[-1]:.1f}")
-            roi = (df['close'].iloc[-1] - cost_input) / cost_input if cost_input > 0 else 0
-            m4.metric("即時損益", f"{roi:+.2%}" if cost_input > 0 else "--")
-
-            # 輸出詳細報告
-            st.markdown(generate_pro_report(df, score, aligned_rsi[-1], aligned_k[-1], aligned_d[-1], cost_input))
-
-            st.subheader("📅 近 5 日量化數據")
-            st.table(source[['日期', '收盤價', 'MACD', 'K', 'D', 'RSI']].tail(5))
-
-            st.divider()
-            st.subheader(f"📰 {display_name if display_name else symbol} 焦點新聞")
-            news = get_google_news(display_name if display_name else symbol)
-            for n in news: st.markdown(f"**[{n['title']}]({n['link']})** \n<small>🕒 {n['pubDate']}</small>", unsafe_allow_html=True)
+            # 3. KD 指標圖 (💡 捨棄 Legend，改用純線條疊加與標題提示，確保左右寬度絕對對齊不破版)
+            line_k = alt.Chart(source).mark_line(color='#e377c2', strokeWidth=2).encode(x=x_axis, y=alt.Y('K:Q', scale=alt.Scale(domain=[0, 100])))
+            line_d = alt.Chart(source).mark_line(color='#17becf', strokeWidth=2).encode(x=x_axis, y=alt.Y('D:Q', scale=alt.Scale(domain=[0, 100])))
             
-            st.caption("📊 數據來源：Yahoo Finance 官方開源 API 授權")
+            txt_k = line_k.mark_text(align='right', dx=-10, dy=-25, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(text=alt.Text('K:Q', format='.1f')).transform_filter(nearest)
+            txt_d_kd = line_d.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(text=alt.Text('D:Q', format='.1f')).transform_filter(nearest)
             
-        else: st.error("❌ 無法取得數據，請檢查輸入是否正確。")
+            c_kd = (line_k + line_d + selectors + rules + txt_k + txt_d_kd).properties(height=120, title="KD 指標 (🟣K線 / 🔵D線)")
+
+            # 4. RSI 圖
+            line_rsi = alt.Chart(source).mark_line(color='#8c564b', strokeWidth=2).encode
