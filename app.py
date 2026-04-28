@@ -252,4 +252,32 @@ if stock_input:
         # 診斷報告
         st.divider()
         st.subheader(f"💡 {final_name} 深度量化診斷報告")
-        h_up = hist[-1] > hist[-2] if len(hist
+        h_up = hist[-1] > hist[-2] if len(hist)>1 else False
+        _, _, h_w = perform_macd_full(wk_data['closes'], is_tw) if wk_data else (0,0,[0,0])
+        _, _, h_m = perform_macd_full(mo_data['closes'], is_tw) if mo_data else (0,0,[0,0])
+        score = sum([h_up, (len(h_w)>1 and h_w[-1]>h_w[-2]), (len(h_m)>1 and h_m[-1]>h_m[-2])])
+        
+        m1, m2, m3 = st.columns(3)
+        m1.metric("當前成交價", f"${d_data['price']}")
+        roi = (d_data['price'] - cost_input) / cost_input if cost_input > 0 else 0
+        m2.metric("即時損益率", f"{roi:+.2%}" if cost_input > 0 else "空手觀望")
+        m3.metric("共振得分", f"{score} 分")
+        
+        st.markdown(generate_detailed_report(score, rsi_vals[-1], roi, cost_input, cost_input > 0))
+
+        st.subheader("📅 近 5 個交易日軌跡")
+        st.table(source.tail(5))
+
+        # 即時新聞
+        st.divider()
+        st.subheader(f"📰 {final_name} 最新市場新聞")
+        news = get_stock_news(final_name)
+        if news:
+            for n in news:
+                st.markdown(f"**[{n['title']}]({n['link']})**")
+                st.caption(f"🗞️ {n['publisher']} ｜ 🕒 {n['pubDate']}")
+                st.write("")
+        else: st.info("近期暫無相關新聞報導。")
+        
+    else: st.error(f"❌ 查無「{stock_input}」的數據，請確認名稱或代碼是否正確。")
+else: st.info("💡 請在上方輸入個股名稱或代號（例：2330 或 台積電）以開始分析。")
