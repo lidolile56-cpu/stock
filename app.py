@@ -1,4 +1,4 @@
-# 檔名：20260428_持股分析系統_全圖表互動版.py
+# 檔名：20260428_持股分析系統_圖例右置版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -222,8 +222,13 @@ if stock_input:
             source = pd.DataFrame({
                 '日期': [datetime.fromtimestamp(t, tz=tz).strftime('%Y/%m/%d') for t in df['ts']],
                 '收盤價': df['close'].values,
-                '外資': aligned_f, '投信': aligned_s, '散戶': aligned_r,
-                'MACD': aligned_hist, 'RSI': aligned_rsi, 'K': aligned_k, 'D': aligned_d
+                '外資': aligned_f, 
+                '投信': aligned_s, 
+                '散戶': aligned_r,
+                'MACD': aligned_hist, 
+                'RSI': aligned_rsi, 
+                'K': aligned_k, 
+                'D': aligned_d
             }).drop_duplicates(subset=['日期'])
 
             # 💡 核心互動：全域共用的游標選擇器與對齊線
@@ -262,11 +267,11 @@ if stock_input:
             txt_m = alt.Chart(source).mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(x=x_axis, y='MACD', text=alt.Text('MACD:Q', format='.3f')).transform_filter(nearest)
             c_macd = (bar_m + selectors + rules + txt_m).properties(height=100, title="MACD 動能")
 
-            # 6. KD 指標圖 (強制獨立圖例)
+            # 6. KD 指標圖 (💡 圖例右側顯示)
             kd_melt = source.melt('日期', value_vars=['K', 'D'], var_name='指標', value_name='數值')
             line_kd = alt.Chart(kd_melt).mark_line(strokeWidth=2).encode(
                 x=x_axis, y=alt.Y('數值', scale=alt.Scale(domain=[0, 100]), title=None),
-                color=alt.Color('指標:N', scale=alt.Scale(domain=['K', 'D'], range=['#e377c2', '#17becf']), legend=alt.Legend(orient="top-left", title=None))
+                color=alt.Color('指標:N', scale=alt.Scale(domain=['K', 'D'], range=['#e377c2', '#17becf']), legend=alt.Legend(orient="right", title=None))
             )
             txt_k = alt.Chart(source).mark_text(align='right', dx=-10, dy=-25, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(x=x_axis, y='K', text=alt.Text('K:Q', format='.1f')).transform_filter(nearest)
             txt_d_kd = alt.Chart(source).mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(x=x_axis, y='D', text=alt.Text('D:Q', format='.1f')).transform_filter(nearest)
@@ -277,7 +282,7 @@ if stock_input:
             txt_rsi = line_rsi.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold').encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
             c_rsi = (line_rsi + selectors + rules + txt_rsi).properties(height=120, title="RSI (14)")
 
-            # 垂直拼合所有圖表 (確保圖例獨立不打架)
+            # 垂直拼合所有圖表
             final_chart = alt.vconcat(c_price, c_f, c_s, c_r_chip, c_macd, c_kd, c_rsi).resolve_scale(x='shared', color='independent')
             st.altair_chart(final_chart, use_container_width=True)
 
@@ -300,5 +305,8 @@ if stock_input:
             st.subheader(f"📰 {display_name if display_name else symbol} 焦點新聞")
             news = get_google_news(display_name if display_name else symbol)
             for n in news: st.markdown(f"**[{n['title']}]({n['link']})** \n<small>🕒 {n['pubDate']}</small>", unsafe_allow_html=True)
+            
+            # 💡 資料來源標註 (查核要求)
+            st.caption("📊 數據來源：Yahoo Finance / FinMind 官方開源 API 授權")
             
         else: st.error("❌ 無法取得數據，請檢查輸入是否正確。")
