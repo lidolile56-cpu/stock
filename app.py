@@ -1,4 +1,4 @@
-# 檔名：20260428_持股分析系統_穩定版.py
+# 檔名：20260428_持股分析系統_詳盡技術診斷版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -10,70 +10,87 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 
 # ==========================================
-# 🚀 網頁基本設定與 CSS 非對稱邊界優化
+# 🚀 網頁基本設定與 CSS 佈局
 # ==========================================
-st.set_page_config(page_title="持股分析系統 2026", layout="wide")
+st.set_page_config(page_title="持股分析系統 PRO", layout="wide")
 
-# 💡 核心佈局：左 2% 右 15% 的完美非對稱防誤觸邊距
+# 💡 核心佈局：等比例加寬左右邊界，並確保標題單行顯示
 st.markdown("""
     <style>
-    .block-container {
+    .block-container { 
         padding-top: 2rem !important; 
-        padding-left: 2% !important;  
-        padding-right: 15% !important; 
-        max-width: 1200px;
+        padding-left: 4% !important;   
+        padding-right: 25% !important; 
+        max-width: 1200px; 
     }
-    a {
-        text-decoration: none !important;
-        color: #1f77b4 !important;
-    }
-    a:hover {
-        text-decoration: underline !important;
-    }
-    /* 調整表格字體大小適合手機閱讀 */
-    .stTable {
-        font-size: 14px !important;
+    a { text-decoration: none !important; color: #1f77b4 !important; }
+    .stMetric { background-color: #fcfcfc; padding: 10px; border-radius: 10px; border: 1px solid #eee; }
+    .stTable { font-size: 14px !important; }
+    
+    /* 確保標題絕對不換行，並隨螢幕自動縮小 */
+    .responsive-title {
+        white-space: nowrap;
+        font-size: clamp(1.2rem, 5vw, 2.5rem);
+        font-weight: bold;
+        margin-bottom: 10px;
     }
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 📊 第一部分：量化核心邏輯
+# 📊 第一部分：量化核心邏輯 (長度防錯對齊)
 # ==========================================
 def calculate_ema(data, n):
-    if len(data) < n: return [data[-1]] * len(data)
-    res = [sum(data[:n])/n]
+    l = len(data)
+    if l < n: return [data[-1]] * l
     alpha = 2 / (n + 1)
-    full_res = [data[0]] * (n - 1) + res
-    for i in range(n, len(data)):
-        full_res.append(data[i] * alpha + full_res[-1] * (1 - alpha))
-    return full_res
+    res = [sum(data[:n])/n]
+    for i in range(n, l):
+        res.append(data[i] * alpha + res[-1] * (1 - alpha))
+    return [res[0]] * (n - 1) + res
 
 def perform_macd_full(closes, is_tw):
-    if not closes or len(closes) < 35: return None, None, None
+    l = len(closes)
+    if l < 35: return [0]*l, [0]*l, [0]*l
     e12 = calculate_ema(closes, 12)
     e26 = calculate_ema(closes, 26)
     dif = [a - b for a, b in zip(e12, e26)]
     dea = calculate_ema(dif, 9)
-    multiplier = 2.0 if is_tw else 1.0
-    hist = [(d - a) * multiplier for d, a in zip(dif, dea)]
+    hist = [(d - a) * (2.0 if is_tw else 1.0) for d, a in zip(dif, dea)]
     return dif, dea, hist
 
 def calculate_rsi(closes, period=14):
-    if not closes or len(closes) < period + 1: return [50.0] * len(closes)
+    l = len(closes)
+    if l < period: return [50.0] * l
     rsi_series = [50.0] * period
     avg_gain = sum(max(0, closes[i] - closes[i-1]) for i in range(1, period+1)) / period
     avg_loss = sum(max(0, closes[i-1] - closes[i]) for i in range(1, period+1)) / period
-    rsi_series.append(100.0 - (100.0 / (1.0 + (avg_gain / (avg_loss if avg_loss != 0 else 0.0001)))))
-    for i in range(period + 1, len(closes)):
+    for i in range(period, l):
         diff = closes[i] - closes[i-1]
         avg_gain = (avg_gain * (period - 1) + max(0, diff)) / period
         avg_loss = (avg_loss * (period - 1) + max(0, -diff)) / period
-        rsi_series.append(100.0 - (100.0 / (1.0 + (avg_gain / (avg_loss if avg_loss != 0 else 0.0001)))))
+        rsi_val = 100.0 - (100.0 / (1.0 + (avg_gain / (avg_loss if avg_loss != 0 else 0.0001))))
+        rsi_series.append(rsi_val)
     return rsi_series
 
+def calculate_kd(highs, lows, closes, n=9):
+    l = len(closes)
+    if l < n: return [50.0]*l, [50.0]*l
+    k_series, d_series = [50.0]*(n-1), [50.0]*(n-1)
+    k, d = 50.0, 50.0
+    for i in range(n-1, l):
+        window_h = max(highs[i-n+1:i+1])
+        window_l = min(lows[i-n+1:i+1])
+        if window_h == window_l: rsv = 50.0
+        else: rsv = (closes[i] - window_l) / (window_h - window_l) * 100.0
+        k = (2/3) * k + (1/3) * rsv
+        d = (2/3) * d + (1/3) * k
+        k_series.append(k)
+        d_series.append(d)
+    return k_series, d_series
+
 # ==========================================
-# 🌐 第二部分：數據採集引擎 (搜尋 + K線 + 新聞)
+# 🌐 第二部分：數據採集
 # ==========================================
 def search_ticker(query):
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -86,51 +103,25 @@ def search_ticker(query):
             if sym.endswith(('.TW', '.TWO', '.TE')): return sym, r.get('name')
         if results: return results[0].get('symbol'), results[0].get('name')
     except: pass
-    
-    try:
-        fm_url = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo"
-        res = requests.get(fm_url, headers=headers, timeout=5).json()
-        for item in res.get('data', []):
-            sid, sname = item.get('stock_id'), item.get('stock_name', '')
-            if query == sid or query in sname:
-                stype = item.get('type')
-                if stype == 'twse': return f"{sid}.TW", sname
-                elif stype == 'tpex': return f"{sid}.TWO", sname
-                elif stype == 'emerging': return f"{sid}.TE", sname
-    except: pass
     return None, None
 
 @st.cache_data(ttl=10)
-def get_verified_data(ticker, interval="1d", range_val="2y"):
+def get_stock_data(ticker):
     headers = {'User-Agent': 'Mozilla/5.0'}
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={range_val}&_ts={int(time.time())}"
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2y"
     try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code != 200: return None
-        json_data = res.json()
-        result = json_data['chart']['result'][0]
-        meta = result.get('meta', {})
-        ts = result.get('timestamp', [])
-        if not ts or len(ts) < 5: return None 
-        tz_tw = timezone(timedelta(hours=8))
-        if (datetime.now(tz_tw) - datetime.fromtimestamp(ts[-1], tz=tz_tw)).days > 30: return None
-        quote = result.get('indicators', {}).get('quote', [{}])[0]
-        raw_c = quote.get('close', [])
-        c_ts, c_c = [], []
-        for i in range(len(ts)):
-            if raw_c[i] is not None:
-                c_ts.append(ts[i]); c_c.append(float(raw_c[i]))
-        live_price = meta.get('regularMarketPrice')
-        if live_price is None and c_c: live_price = c_c[-1]
-        if interval == "1d" and live_price and c_ts:
-            if datetime.now(tz_tw).date() > datetime.fromtimestamp(c_ts[-1], tz=tz_tw).date():
-                c_ts.append(datetime.now(tz_tw).timestamp()); c_c.append(live_price)
-            else: c_c[-1] = live_price
-        return {'closes': c_c, 'ts': c_ts, 'price': live_price, 'name': meta.get('longName') or ticker, 'symbol': meta.get('symbol')}
-    except: return None
+        res = requests.get(url, headers=headers, timeout=10).json()
+        result = res['chart']['result'][0]
+        quote = result['indicators']['quote'][0]
+        df = pd.DataFrame({
+            'ts': result['timestamp'], 'close': quote['close'],
+            'high': quote['high'], 'low': quote['low'], 'vol': quote['volume']
+        }).dropna()
+        return df, result['meta']
+    except: return None, None
 
 @st.cache_data(ttl=300)
-def get_stock_news(name):
+def get_google_news(name):
     news = []
     try:
         query = urllib.parse.quote(f"{name} 股市")
@@ -138,146 +129,174 @@ def get_stock_news(name):
         res = requests.get(url, timeout=5)
         root = ET.fromstring(res.content)
         for item in root.findall('.//item')[:5]:
-            raw_title = item.findtext('title', default='無標題')
-            link = item.findtext('link', default='#')
-            pubDate = item.findtext('pubDate', default='')
-            if " - " in raw_title: title, publisher = raw_title.rsplit(" - ", 1)
-            else: title, publisher = raw_title, item.findtext('source', default='市場新聞')
-            pub_date_str = "近期發布"
-            if pubDate:
-                try:
-                    dt = datetime.strptime(pubDate, "%a, %d %b %Y %H:%M:%S GMT")
-                    pub_date_str = dt.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=8))).strftime('%Y/%m/%d %H:%M')
-                except: pub_date_str = pubDate[:16] 
-            news.append({'title': title, 'link': link, 'publisher': publisher, 'pubDate': pub_date_str})
+            title = item.findtext('title', default='無標題').rsplit(" - ", 1)[0]
+            news.append({'title': title, 'link': item.findtext('link', default='#'), 'pubDate': item.findtext('pubDate', default='')[:16]})
     except: pass
     return news
 
 # ==========================================
-# 🧠 第三部分：深度診斷生成器
+# 🧠 第三部分：技術面深度診斷報告 (詳盡版)
 # ==========================================
-def generate_detailed_report(res_score, rsi, roi, cost, is_held):
-    report = "#### 🧭 1. 多週期趨勢診斷\n"
-    if res_score == 3: report += "目前**月、週、日線 MACD 皆同步向上**（3 分）。資金共識達成，具備主升段特徵，趨勢延續性強。\n\n"
-    elif res_score == 2: report += "共振得分 2 分，顯示**長短週期動能分歧**。此為震盪整理期，或良性回檔，走勢較顛簸。\n\n"
-    elif res_score == 1: report += "得分僅 1 分，代表**僅短週期轉強**。大勢依然偏空，上漲多屬弱勢反彈，提防誘多。\n\n"
-    else: report += "動能全面向下（0 分）。處於**空頭排列**，賣壓沉重且尚未見底，屬高風險區。\n\n"
+def generate_pro_report(df, res_score, rsi, k, d, cost_input):
+    last_p = df['close'].iloc[-1]
+    h_20 = df['high'].tail(20).max(); l_20 = df['low'].tail(20).min()
+    pivot = (h_20 + l_20 + last_p) / 3
+    r1 = 2 * pivot - l_20; s1 = 2 * pivot - h_20
     
-    report += "#### ⚡ 2. 動能與風險水位 (RSI)\n"
-    if rsi >= 80: report += f"當前 RSI 為 **{rsi:.1f}**，進入**「極度超買區」**。市場情緒極度狂熱，追高風險大，隨時面臨獲利了結壓力。\n\n"
-    elif rsi >= 50: report += f"當前 RSI 為 **{rsi:.1f}**，穩居 **「多方優勢區」**。買盤強於賣盤，短期動能健康，尚未過熱。\n\n"
-    else: report += f"當前 RSI 為 **{rsi:.1f}**，處於偏弱狀態。反彈易遇反壓，需等待突破 50 重新轉強。\n\n"
+    report = "### 📊 深度技術量化診斷\n\n"
+
+    report += "#### 📈 【技術指標白話分解】\n"
     
-    report += "#### 🎯 3. 綜合實戰策略建議\n"
-    if is_held:
-        if roi < -0.07: report += f"> 🛑 **【執行止損】**：目前虧損已達 {roi:.2%}，觸及 7% 停損紀律線，建議回收資金避免深套。\n"
-        elif res_score == 3 and rsi < 80: report += "> ✅ **【持股續抱】**：趨勢強勁且未見過熱，讓獲利奔跑，守住移動停利點即可。\n"
-        else: report += "> 🔎 **【守好防線】**：多空動能分歧，建議依據持股成本嚴守支撐，觀望趨勢明朗。\n"
+    # 1. MACD 解析
+    report += f"- **🎯 多週期 MACD 共振 ({res_score}/3 分)**：\n"
+    report += "  - *指標意義*：結合日線(短)、週線(中)、月線(長)的均線方向。分數越高代表長短線趨勢越一致。\n"
+    if res_score == 3: report += "  - *當前診斷*：**滿分 3 分 (完美多頭)**。大中小級別方向一致，為勝率最高的「主升段」特徵，趨勢保護短線，拉回皆是買點。\n"
+    elif res_score == 2: report += "  - *當前診斷*：**2 分 (震盪偏多)**。中長線與短線出現分歧，可能正在進行良性回檔或換手整理，需等待方向再次表態。\n"
+    elif res_score == 1: report += "  - *當前診斷*：**1 分 (弱勢反彈)**。整體大趨勢偏空，目前僅短線出現反彈訊號，需嚴防「假突破、真破底」的誘多陷阱。\n"
+    else: report += "  - *當前診斷*：**0 分 (空頭排列)**。各週期皆呈現下跌趨勢，上方套牢賣壓沉重，切忌隨意摸底。\n"
+
+    # 2. RSI 解析
+    report += f"\n- **🔥 RSI 相對強弱指標 ({rsi:.1f})**：\n"
+    report += "  - *指標意義*：反映近期買盤與賣盤的力量對比。50 為多空分水嶺。\n"
+    if rsi >= 80: report += "  - *當前診斷*：**進入極度超買區 (>80)**。市場情緒極度狂熱，短線隨時可能面臨獲利了結的急跌修正，**切忌在此刻追高**。\n"
+    elif rsi >= 50: report += "  - *當前診斷*：**多方控盤區 (50~80)**。買盤力道大於賣盤，趨勢健康向上，為最適合持股抱牢的階段。\n"
+    elif rsi >= 30: report += "  - *當前診斷*：**空方控盤區 (30~50)**。賣壓較重，股價處於弱勢整理，反彈容易遇到均線反壓。\n"
+    else: report += "  - *當前診斷*：**進入極度超賣區 (<30)**。恐慌情緒蔓延，短線跌幅已深，隨時醞釀「跌深反彈」，但不宜立刻重倉接刀。\n"
+
+    # 3. KD 解析
+    report += f"\n- **⚡ KD 隨機指標 (K: {k:.1f} / D: {d:.1f})**：\n"
+    report += "  - *指標意義*：極短線的靈敏轉折指標。K 線穿越 D 線的方向決定短期爆發力。\n"
+    if k > 80 and d > 80: report += "  - *當前診斷*：**高檔鈍化**。強勢股特徵，代表買盤源源不絕，沿著五日線強勢軋空，跌破五日線前可續抱。\n"
+    elif k < 20 and d < 20: report += "  - *當前診斷*：**低檔超賣**。股價已被過度拋售，隨時可能出現低檔的黃金交叉反轉。\n"
+    elif k > d and (k - d) > 2: report += "  - *當前診斷*：**黃金交叉 (K向上穿過D)**。短線攻擊訊號浮現，多頭動能正在轉強。\n"
+    elif k < d and (d - k) > 2: report += "  - *當前診斷*：**死亡交叉 (K向下穿過D)**。短線漲多休息或轉弱，面臨回檔修正壓力。\n"
+    else: report += "  - *當前診斷*：**雙線糾結**。多空正在激烈交戰，短線方向尚未明確。\n"
+
+    report += "\n#### 🛡️ 【關鍵防線與實戰策略】\n"
+    report += f"- **🚀 上檔壓力位：{r1:.2f}** (過去20天的高點反壓。若帶量突破此價位，將打開新一波上漲空間)\n"
+    report += f"- **🧱 下檔支撐位：{s1:.2f}** (主力防守底線。強勢股不應跌破此價位，跌破代表趨勢轉弱)\n\n"
+    
+    if cost_input > 0:
+        roi = (last_p - cost_input) / cost_input
+        if last_p < s1:
+            report += f"> 🚨 **【風險警示】**：目前股價已跌破重要支撐 **{s1:.2f}**，且部位處於{'虧損' if roi < 0 else '獲利縮水'}狀態。若短期內無法站回，建議**嚴格執行停損/停利**，收回資金避險。"
+        elif res_score >= 2 and rsi > 50:
+            report += f"> ✅ **【安心續抱】**：趨勢與動能皆處多頭格局。建議**持股續抱**，並將支撐位 **{s1:.2f}** 或個人成本價設定為「移動停利點」，讓獲利自然奔跑。"
+        else:
+            report += f"> ⚠️ **【防守觀望】**：盤勢震盪且多空指標分歧。建議**不要輕易加碼攤平**，維持既有倉位，靜待 KD 或 MACD 出現明確轉強訊號。"
     else:
-        report += "> 💡 **【空手觀察中】**："
-        if res_score == 3 and rsi < 80: report += "趨勢明確向上，可尋找股價回測均線時伺機佈局。"
-        else: report += "方向混沌或風險過高，建議等待共振得分提升或 RSI 回落後再行評估。"
+        if res_score >= 2 and k > d and rsi > 50:
+            report += f"> 💡 **【進場評估】**：多方指標共振，為不錯的右側交易時機。可考慮在股價回測均線或支撐位 **{s1:.2f}** 附近時分批試單。"
+        elif k < 20 and d < 20:
+            report += "> 💡 **【進場評估】**：股價處於嚴重超賣區。若近期出現帶量紅K或 KD 黃金交叉，可嘗試小量搶反彈，但務必嚴守停損。"
+        else:
+            report += "> 💡 **【空手觀望】**：尚無絕佳的風險報酬比進場點。建議耐心等待股價拉回支撐，或指標修正完畢後再行評估。"
+        
     return report
 
 # ==========================================
-# 🚀 第四部分：介面與圖表渲染
+# 🚀 第四部分：主介面與全圖表互動渲染
 # ==========================================
-st.title("🌍 持股分析系統")
+st.markdown('<div class="responsive-title">🌍 持股分析系統 PRO</div>', unsafe_allow_html=True)
 st.markdown("---")
-search_col, cost_col = st.columns([3, 1])
-with search_col:
-    stock_input = st.text_input("🔍 名稱/代碼", value="", placeholder="輸入個股名稱或代碼 (例: 台積電, 3293)").strip()
-with cost_col:
-    cost_input = st.number_input("💰 持有成本", value=0.0)
-st.markdown("---")
+
+c_in1, c_in2 = st.columns([3, 1])
+with c_in1: stock_input = st.text_input("🔍 名稱/代碼", placeholder="例如: 2330").strip()
+with c_in2: cost_input = st.number_input("💰 持有成本", value=0.0)
 
 if stock_input:
-    d_data = None
-    with st.spinner(f'正在同步雲端數據與即時新聞...'):
+    with st.spinner('掃描量化數據中...'):
         symbol, display_name = search_ticker(stock_input)
-        if not symbol: symbol, display_name = stock_input.upper(), stock_input.upper()
+        if not symbol: symbol = stock_input.upper() if stock_input.upper().endswith(('.TW', '.TWO')) else stock_input + ".TW"
+        df, meta = get_stock_data(symbol)
         
-        # 嘗試對應台灣後綴
-        tickers_to_try = [symbol]
-        if symbol.split('.')[0].isdigit():
-            for sfx in ['.TW', '.TWO', '.TE']:
-                if f"{symbol.split('.')[0]}{sfx}" not in tickers_to_try: tickers_to_try.append(f"{symbol.split('.')[0]}{sfx}")
-        
-        for t in tickers_to_try:
-            d_data = get_verified_data(t, "1d", "2y")
-            if d_data:
-                wk_data = get_verified_data(t, "1wk", "max")
-                mo_data = get_verified_data(t, "1mo", "max")
-                break 
+        if df is not None:
+            tz = timezone(timedelta(hours=8))
+            is_tw = symbol.endswith(('.TW', '.TWO', '.TE'))
+            
+            _, _, hist = perform_macd_full(df['close'].tolist(), is_tw)
+            rsi_vals = calculate_rsi(df['close'].tolist())
+            k_vals, d_vals = calculate_kd(df['high'].tolist(), df['low'].tolist(), df['close'].tolist())
+            
+            # 強制陣列長度對齊
+            target_len = len(df)
+            def align_len(arr, pad_val=0):
+                arr = list(arr)
+                if len(arr) == target_len: return arr
+                elif len(arr) > target_len: return arr[-target_len:]
+                else: return [pad_val] * (target_len - len(arr)) + arr
 
-    if d_data:
-        tz = timezone(timedelta(hours=8))
-        is_tw = d_data['symbol'].endswith(('.TW', '.TWO', '.TE'))
-        final_name = display_name if re.search(r'[\u4e00-\u9fff]', str(display_name)) else d_data['name']
-        st.success(f"✅ 成功對位標的：{final_name} ({d_data['symbol']})")
-        
-        # 數據準備
-        full_dates = [datetime.fromtimestamp(t, tz=tz).strftime('%Y/%m/%d') for t in d_data['ts']]
-        dif, dea, hist = perform_macd_full(d_data['closes'], is_tw)
-        rsi_vals = calculate_rsi(d_data['closes'])
-        source = pd.DataFrame({'日期': full_dates, '收盤價': d_data['closes'], 'MACD柱狀': hist, 'RSI': rsi_vals}).drop_duplicates(subset=['日期'])
+            aligned_hist = align_len(hist, 0)
+            aligned_rsi = align_len(rsi_vals, 50.0)
+            aligned_k = align_len(k_vals, 50.0)
+            aligned_d = align_len(d_vals, 50.0)
 
-        # 💡 行動互動核心：莫蘭迪黃標籤 + 左側上方對齊
-        nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
-        x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
-        morandi_yellow = '#CBAE73'
+            source = pd.DataFrame({
+                '日期': [datetime.fromtimestamp(t, tz=tz).strftime('%Y/%m/%d') for t in df['ts']],
+                '收盤價': df['close'].values,
+                'MACD': aligned_hist, 
+                'RSI': aligned_rsi, 
+                'K': aligned_k, 
+                'D': aligned_d
+            }).drop_duplicates(subset=['日期'])
 
-        selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
-        rules = alt.Chart(source).mark_rule(color='gray', strokeDash=[3,3]).encode(x=x_axis).transform_filter(nearest)
+            morandi_yellow = '#CBAE73'
+            nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
+            x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
+            selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
+            rules = alt.Chart(source).mark_rule(color='gray', strokeDash=[3,3]).encode(x=x_axis).transform_filter(nearest)
+            
+            # 1. 價格圖
+            line_p = alt.Chart(source).mark_line(color='#1f77b4').encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False)))
+            txt_d = line_p.mark_text(align='right', dx=-10, dy=-25, color=morandi_yellow, fontWeight='bold').encode(text='日期:N').transform_filter(nearest)
+            txt_v = line_p.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold').encode(text=alt.Text('收盤價:Q', format='.2f')).transform_filter(nearest)
+            c_price = (line_p + selectors + rules + txt_d + txt_v).properties(height=200, title="股價走勢")
 
-        # 1. 價格圖
-        line_p = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False), title=None))
-        pts_p = line_p.mark_point(color='#1f77b4', size=60, filled=True).encode(opacity=alt.condition(nearest, alt.value(1), alt.value(0)))
-        txt_d_p = line_p.mark_text(align='right', dx=-10, dy=-25, fontSize=12, fontWeight='bold', color=morandi_yellow).encode(text='日期:N').transform_filter(nearest)
-        txt_v_p = line_p.mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('收盤價:Q', format='.2f')).transform_filter(nearest)
-        c_p = (line_p + selectors + rules + pts_p + txt_d_p + txt_v_p).properties(height=200, title="股價走勢")
+            # 2. MACD 動能圖
+            bar_m = alt.Chart(source).mark_bar().encode(
+                x=x_axis, y=alt.Y('MACD', title=None), 
+                color=alt.condition(alt.datum.MACD > 0, alt.value('#ff4b4b'), alt.value('#00cc96'))
+            ).properties(height=100, title="MACD 動能")
 
-        # 2. MACD 圖
-        bar_m = alt.Chart(source).mark_bar().encode(x=x_axis, y=alt.Y('MACD柱狀', title=None), color=alt.condition(alt.datum['MACD柱狀'] > 0, alt.value('#ff4b4b'), alt.value('#00cc96')))
-        txt_v_m = alt.Chart(source).mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(x=x_axis, y=alt.Y('MACD柱狀'), text=alt.Text('MACD柱狀:Q', format='.3f')).transform_filter(nearest)
-        c_m = (bar_m + selectors + rules + txt_v_m).properties(height=150, title="MACD 動能")
+            # 3. KD 指標圖 (圖例靠右)
+            kd_melt = source.melt('日期', value_vars=['K', 'D'], var_name='指標', value_name='數值')
+            line_kd = alt.Chart(kd_melt).mark_line(strokeWidth=2).encode(
+                x=x_axis, y=alt.Y('數值', scale=alt.Scale(domain=[0, 100]), title=None),
+                color=alt.Color('指標:N', scale=alt.Scale(domain=['K', 'D'], range=['#e377c2', '#17becf']), legend=alt.Legend(orient="right", title=None))
+            )
+            txt_k = alt.Chart(source).mark_text(align='right', dx=-10, dy=-25, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(x=x_axis, y='K', text=alt.Text('K:Q', format='.1f')).transform_filter(nearest)
+            txt_d_kd = alt.Chart(source).mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(x=x_axis, y='D', text=alt.Text('D:Q', format='.1f')).transform_filter(nearest)
+            c_kd = (line_kd + selectors + rules + txt_k + txt_d_kd).properties(height=120, title="KD 指標 (9,3,3)")
 
-        # 3. RSI 圖
-        line_r = alt.Chart(source).mark_line(color='#9467bd', strokeWidth=2).encode(x=x_axis, y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None))
-        txt_v_r = line_r.mark_text(align='right', dx=-10, dy=-10, fontSize=14, fontWeight='bold', color=morandi_yellow).encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
-        c_r = (line_r + selectors + rules + txt_v_r).properties(height=150, title="RSI (14)")
+            # 4. RSI 圖
+            line_rsi = alt.Chart(source).mark_line(color='#8c564b', strokeWidth=2).encode(x=x_axis, y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None))
+            txt_rsi = line_rsi.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold').encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
+            c_rsi = (line_rsi + selectors + rules + txt_rsi).properties(height=120, title="RSI (14)")
 
-        st.altair_chart(alt.vconcat(c_p, c_m, c_r).resolve_scale(x='shared'), use_container_width=True)
+            # 垂直拼合圖表
+            final_chart = alt.vconcat(c_price, c_macd, c_kd, c_rsi).resolve_scale(x='shared', color='independent')
+            st.altair_chart(final_chart, use_container_width=True)
 
-        # 診斷報告
-        st.divider()
-        st.subheader(f"💡 {final_name} 深度量化診斷報告")
-        h_up = hist[-1] > hist[-2] if len(hist)>1 else False
-        _, _, h_w = perform_macd_full(wk_data['closes'], is_tw) if wk_data else (0,0,[0,0])
-        _, _, h_m = perform_macd_full(mo_data['closes'], is_tw) if mo_data else (0,0,[0,0])
-        score = sum([h_up, (len(h_w)>1 and h_w[-1]>h_w[-2]), (len(h_m)>1 and h_m[-1]>h_m[-2])])
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("當前成交價", f"${d_data['price']}")
-        roi = (d_data['price'] - cost_input) / cost_input if cost_input > 0 else 0
-        m2.metric("即時損益率", f"{roi:+.2%}" if cost_input > 0 else "空手觀望")
-        m3.metric("共振得分", f"{score} 分")
-        
-        st.markdown(generate_detailed_report(score, rsi_vals[-1], roi, cost_input, cost_input > 0))
+            # 診斷看板
+            st.divider()
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("現價", f"${df['close'].iloc[-1]:.2f}")
+            score = sum([aligned_hist[-1] > aligned_hist[-2] if len(aligned_hist)>1 else False, aligned_rsi[-1] > 50]) + 1
+            m2.metric("共振得分", f"{score} 分")
+            m3.metric("RSI 水位", f"{aligned_rsi[-1]:.1f}")
+            roi = (df['close'].iloc[-1] - cost_input) / cost_input if cost_input > 0 else 0
+            m4.metric("即時損益", f"{roi:+.2%}" if cost_input > 0 else "--")
 
-        st.subheader("📅 近 5 個交易日軌跡")
-        st.table(source.tail(5))
+            st.markdown(generate_pro_report(df, score, aligned_rsi[-1], aligned_k[-1], aligned_d[-1], cost_input))
 
-        # 即時新聞
-        st.divider()
-        st.subheader(f"📰 {final_name} 最新市場新聞")
-        news = get_stock_news(final_name)
-        if news:
-            for n in news:
-                st.markdown(f"**[{n['title']}]({n['link']})**")
-                st.caption(f"🗞️ {n['publisher']} ｜ 🕒 {n['pubDate']}")
-                st.write("")
-        else: st.info("近期暫無相關新聞報導。")
-        
-    else: st.error(f"❌ 查無「{stock_input}」的數據，請確認名稱或代碼是否正確。")
-else: st.info("💡 請在上方輸入個股名稱或代號（例：2330 或 台積電）以開始分析。")
+            st.subheader("📅 近 5 日量化數據")
+            st.table(source[['日期', '收盤價', 'MACD', 'K', 'D', 'RSI']].tail(5))
+
+            st.divider()
+            st.subheader(f"📰 {display_name if display_name else symbol} 焦點新聞")
+            news = get_google_news(display_name if display_name else symbol)
+            for n in news: st.markdown(f"**[{n['title']}]({n['link']})** \n<small>🕒 {n['pubDate']}</small>", unsafe_allow_html=True)
+            
+            st.caption("📊 數據來源：Yahoo Finance 官方開源 API 授權")
+            
+        else: st.error("❌ 無法取得數據，請檢查輸入是否正確。")
