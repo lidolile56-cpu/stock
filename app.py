@@ -1,4 +1,4 @@
-# 檔名：20260428_持股分析系統_防斷行修復版.py
+# 檔名：20260428_持股分析系統_防截斷完整版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -38,7 +38,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 📊 第一部分：量化核心邏輯
+# 📊 第一部分：量化核心邏輯 (長度防錯對齊)
 # ==========================================
 def calculate_ema(data, n):
     l = len(data)
@@ -208,4 +208,130 @@ if stock_input:
             is_tw = symbol.endswith(('.TW', '.TWO', '.TE'))
             
             _, _, hist = perform_macd_full(df['close'].tolist(), is_tw)
-            rsi_
+            rsi_vals = calculate_rsi(df['close'].tolist())
+            k_vals, d_vals = calculate_kd(df['high'].tolist(), df['low'].tolist(), df['close'].tolist())
+            
+            # 強制陣列長度對齊
+            target_len = len(df)
+            def align_len(arr, pad_val=0):
+                arr = list(arr)
+                if len(arr) == target_len: return arr
+                elif len(arr) > target_len: return arr[-target_len:]
+                else: return [pad_val] * (target_len - len(arr)) + arr
+
+            aligned_hist = align_len(hist, 0)
+            aligned_rsi = align_len(rsi_vals, 50.0)
+            aligned_k = align_len(k_vals, 50.0)
+            aligned_d = align_len(d_vals, 50.0)
+
+            # 建立表格 (修復所有長度與截斷問題)
+            source = pd.DataFrame({
+                '日期': [datetime.fromtimestamp(t, tz=tz).strftime('%Y/%m/%d') for t in df['ts']],
+                '收盤價': df['close'].values,
+                'MACD': aligned_hist, 
+                'RSI': aligned_rsi, 
+                'K': aligned_k, 
+                'D': aligned_d
+            }).drop_duplicates(subset=['日期'])
+
+            morandi_yellow = '#CBAE73'
+            nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
+            x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
+            selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
+            rules = alt.Chart(source).mark_rule(color='gray', strokeDash=[3,3]).encode(x=x_axis).transform_filter(nearest)
+            
+            # 1. 價格圖 (多行拆解防斷行)
+            line_p = alt.Chart(source).mark_line(color='#1f77b4').encode(
+                x=x_axis, 
+                y=alt.Y('收盤價', scale=alt.Scale(zero=False))
+            )
+            txt_d = line_p.mark_text(
+                align='right', dx=-10, dy=-25, color=morandi_yellow, fontWeight='bold'
+            ).encode(
+                text='日期:N'
+            ).transform_filter(nearest)
+            txt_v = line_p.mark_text(
+                align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold'
+            ).encode(
+                text=alt.Text('收盤價:Q', format='.2f')
+            ).transform_filter(nearest)
+            c_price = (line_p + selectors + rules + txt_d + txt_v).properties(height=200, title="股價走勢")
+
+            # 2. MACD 動能圖 (多行拆解防斷行)
+            bar_m = alt.Chart(source).mark_bar().encode(
+                x=x_axis, 
+                y=alt.Y('MACD', title=None), 
+                color=alt.condition(alt.datum.MACD > 0, alt.value('#ff4b4b'), alt.value('#00cc96'))
+            )
+            txt_m = alt.Chart(source).mark_text(
+                align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold'
+            ).encode(
+                x=x_axis, 
+                y='MACD', 
+                text=alt.Text('MACD:Q', format='.3f')
+            ).transform_filter(nearest)
+            c_macd = (bar_m + selectors + rules + txt_m).properties(height=100, title="MACD 動能")
+
+            # 3. KD 指標圖 (多行拆解防斷行，圖例靠右)
+            kd_melt = source.melt('日期', value_vars=['K', 'D'], var_name='指標', value_name='數值')
+            line_kd = alt.Chart(kd_melt).mark_line(strokeWidth=2).encode(
+                x=x_axis, 
+                y=alt.Y('數值', scale=alt.Scale(domain=[0, 100]), title=None),
+                color=alt.Color('指標:N', scale=alt.Scale(domain=['K', 'D'], range=['#e377c2', '#17becf']), legend=alt.Legend(orient="right", title=None))
+            )
+            txt_k = alt.Chart(source).mark_text(
+                align='right', dx=-10, dy=-25, color=morandi_yellow, fontSize=12, fontWeight='bold'
+            ).encode(
+                x=x_axis, 
+                y='K', 
+                text=alt.Text('K:Q', format='.1f')
+            ).transform_filter(nearest)
+            txt_d_kd = alt.Chart(source).mark_text(
+                align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold'
+            ).encode(
+                x=x_axis, 
+                y='D', 
+                text=alt.Text('D:Q', format='.1f')
+            ).transform_filter(nearest)
+            c_kd = (line_kd + selectors + rules + txt_k + txt_d_kd).properties(height=120, title="KD 指標 (9,3,3)")
+
+            # 4. RSI 圖 (多行拆解防斷行)
+            line_rsi = alt.Chart(source).mark_line(color='#8c564b', strokeWidth=2).encode(
+                x=x_axis, 
+                y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None)
+            )
+            txt_rsi = line_rsi.mark_text(
+                align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold'
+            ).encode(
+                text=alt.Text('RSI:Q', format='.1f')
+            ).transform_filter(nearest)
+            c_rsi = (line_rsi + selectors + rules + txt_rsi).properties(height=120, title="RSI (14)")
+
+            # 垂直拼合圖表
+            final_chart = alt.vconcat(c_price, c_macd, c_kd, c_rsi).resolve_scale(x='shared', color='independent')
+            st.altair_chart(final_chart, use_container_width=True)
+
+            # 診斷看板
+            st.divider()
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("現價", f"${df['close'].iloc[-1]:.2f}")
+            score = sum([aligned_hist[-1] > aligned_hist[-2] if len(aligned_hist)>1 else False, aligned_rsi[-1] > 50]) + 1
+            m2.metric("共振得分", f"{score} 分")
+            m3.metric("RSI 水位", f"{aligned_rsi[-1]:.1f}")
+            roi = (df['close'].iloc[-1] - cost_input) / cost_input if cost_input > 0 else 0
+            m4.metric("即時損益", f"{roi:+.2%}" if cost_input > 0 else "--")
+
+            # 輸出詳細報告
+            st.markdown(generate_pro_report(df, score, aligned_rsi[-1], aligned_k[-1], aligned_d[-1], cost_input))
+
+            st.subheader("📅 近 5 日量化數據")
+            st.table(source[['日期', '收盤價', 'MACD', 'K', 'D', 'RSI']].tail(5))
+
+            st.divider()
+            st.subheader(f"📰 {display_name if display_name else symbol} 焦點新聞")
+            news = get_google_news(display_name if display_name else symbol)
+            for n in news: st.markdown(f"**[{n['title']}]({n['link']})** \n<small>🕒 {n['pubDate']}</small>", unsafe_allow_html=True)
+            
+            st.caption("📊 數據來源：Yahoo Finance 官方開源 API 授權")
+            
+        else: st.error("❌ 無法取得數據，請檢查輸入是否正確。")
