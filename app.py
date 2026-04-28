@@ -1,4 +1,4 @@
-# 檔名：20260428_持股分析系統_純技術面_修復版.py
+# 檔名：20260428_持股分析系統_防斷行修復版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -38,7 +38,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 📊 第一部分：量化核心邏輯 (長度防錯對齊)
+# 📊 第一部分：量化核心邏輯
 # ==========================================
 def calculate_ema(data, n):
     l = len(data)
@@ -208,36 +208,4 @@ if stock_input:
             is_tw = symbol.endswith(('.TW', '.TWO', '.TE'))
             
             _, _, hist = perform_macd_full(df['close'].tolist(), is_tw)
-            rsi_vals = calculate_rsi(df['close'].tolist())
-            k_vals, d_vals = calculate_kd(df['high'].tolist(), df['low'].tolist(), df['close'].tolist())
-            
-            # 強制陣列長度對齊
-            target_len = len(df)
-            def align_len(arr, pad_val=0):
-                arr = list(arr)
-                if len(arr) == target_len: return arr
-                elif len(arr) > target_len: return arr[-target_len:]
-                else: return [pad_val] * (target_len - len(arr)) + arr
-
-            aligned_hist = align_len(hist, 0)
-            aligned_rsi = align_len(rsi_vals, 50.0)
-            aligned_k = align_len(k_vals, 50.0)
-            aligned_d = align_len(d_vals, 50.0)
-
-            source = pd.DataFrame({
-                '日期': [datetime.fromtimestamp(t, tz=tz).strftime('%Y/%m/%d') for t in df['ts']],
-                '收盤價': df['close'].values,
-                'MACD': aligned_hist, 
-                'RSI': aligned_rsi, 
-                'K': aligned_k, 
-                'D': aligned_d
-            }).drop_duplicates(subset=['日期'])
-
-            morandi_yellow = '#CBAE73'
-            nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
-            x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
-            selectors = alt.Chart(source).mark_point().encode(x=x_axis, opacity=alt.value(0)).add_params(nearest)
-            rules = alt.Chart(source).mark_rule(color='gray', strokeDash=[3,3]).encode(x=x_axis).transform_filter(nearest)
-            
-            # 1. 價格圖
-            line_p = alt.Chart(source).mark_line(color='#1f77b4').encode(x=x_axis,
+            rsi_
