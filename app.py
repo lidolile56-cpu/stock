@@ -1,4 +1,4 @@
-# 檔名：20260428_持股分析系統_KD擴充版.py
+# 檔名：20260428_持股分析系統_KD擴充_陣列對齊版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -29,13 +29,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 📊 第一部分：量化核心邏輯 (加入 KD)
+# 📊 第一部分：量化核心邏輯 
 # ==========================================
 def calculate_ema(data, n):
-    if len(data) < n: return [data[-1]] * len(data)
+    l = len(data)
+    if l < n: return [data[-1]] * l
     alpha = 2 / (n + 1)
     res = [sum(data[:n])/n]
-    for i in range(n, len(data)):
+    for i in range(n, l):
         res.append(data[i] * alpha + res[-1] * (1 - alpha))
     return [res[0]] * (n - 1) + res
 
@@ -51,52 +52,42 @@ def perform_macd_full(closes, is_tw):
 
 def calculate_rsi(closes, period=14):
     l = len(closes)
-    if l < period + 1: return [50.0] * l
+    if l < period: return [50.0] * l
     rsi_series = [50.0] * period
     avg_gain = sum(max(0, closes[i] - closes[i-1]) for i in range(1, period+1)) / period
     avg_loss = sum(max(0, closes[i-1] - closes[i]) for i in range(1, period+1)) / period
-    for i in range(period + 1, l):
+    for i in range(period, l):
         diff = closes[i] - closes[i-1]
         avg_gain = (avg_gain * (period - 1) + max(0, diff)) / period
         avg_loss = (avg_loss * (period - 1) + max(0, -diff)) / period
         rsi_val = 100.0 - (100.0 / (1.0 + (avg_gain / (avg_loss if avg_loss != 0 else 0.0001))))
         rsi_series.append(rsi_val)
-    return rsi_series[:l]
+    return rsi_series
 
-# 💡 新增：KD 指標計算 (9, 3, 3)
 def calculate_kd(highs, lows, closes, n=9):
     l = len(closes)
     if l < n: return [50.0]*l, [50.0]*l
     k_series, d_series = [50.0]*(n-1), [50.0]*(n-1)
     k, d = 50.0, 50.0
-    
     for i in range(n-1, l):
         window_h = max(highs[i-n+1:i+1])
         window_l = min(lows[i-n+1:i+1])
-        
-        if window_h == window_l:
-            rsv = 50.0
-        else:
-            rsv = (closes[i] - window_l) / (window_h - window_l) * 100.0
-            
+        if window_h == window_l: rsv = 50.0
+        else: rsv = (closes[i] - window_l) / (window_h - window_l) * 100.0
         k = (2/3) * k + (1/3) * rsv
         d = (2/3) * d + (1/3) * k
         k_series.append(k)
         d_series.append(d)
-        
-    return k_series[:l], d_series[:l]
+    return k_series, d_series
 
 def estimate_chip_flow(df):
-    """模擬外資、投信、散戶籌碼動向"""
     l = len(df)
     raw_flow = (df['close'].diff() * df['vol']).fillna(0)
     max_f = raw_flow.abs().max() if raw_flow.abs().max() != 0 else 1
-    
     f_sim = (raw_flow.ewm(span=15).mean() / max_f * 50 + 50).clip(5, 95).tolist()
     s_sim = (raw_flow.ewm(span=5).mean() / max_f * 50 + 50).clip(5, 95).tolist()
     r_sim = [100 - (f + s)/2 for f, s in zip(f_sim, s_sim)]
-    
-    return f_sim[:l], s_sim[:l], r_sim[:l]
+    return f_sim, s_sim, r_sim
 
 # ==========================================
 # 🌐 第二部分：數據採集
@@ -144,7 +135,7 @@ def get_google_news(name):
     return news
 
 # ==========================================
-# 🧠 第三部分：全維度報告生成 (整合 KD)
+# 🧠 第三部分：全維度報告生成
 # ==========================================
 def generate_pro_report(df, res_score, rsi, k, d, f, s, r, cost_input):
     last_p = df['close'].iloc[-1]
@@ -153,14 +144,11 @@ def generate_pro_report(df, res_score, rsi, k, d, f, s, r, cost_input):
     r1 = 2 * pivot - l_20; s1 = 2 * pivot - h_20
     
     report = "#### 🕵️ 量化與籌碼綜合診斷\n"
-    
-    # 籌碼判斷
     if f > 60 and s > 60: report += "- **籌碼格局**：🚀 **土洋合作**。外資與投信同步買入，多頭動能極強。\n"
     elif f < 40 and s < 40: report += "- **籌碼格局**：⛈️ **主力撤退**。僅剩散戶熱度支撐，應提防高檔反轉。\n"
     elif s > 65: report += "- **籌碼格局**：🔥 **投信認養**。中小型標的具備作帳潛力。\n"
     else: report += "- **籌碼格局**：⚖️ **區間換手**。目前各方勢力動向趨於平衡。\n"
 
-    # 技術判斷 (加入 KD)
     report += f"- **技術指標**：MACD 共振得分 **{res_score} 分**，RSI 為 **{rsi:.1f}**。\n"
     report += f"- **KD 診斷 (K:{k:.1f} / D:{d:.1f})**："
     if k > 80 and d > 80: report += "處於 **高檔鈍化** 狀態，強勢股可能繼續軋空，但切忌追高。\n"
@@ -169,7 +157,6 @@ def generate_pro_report(df, res_score, rsi, k, d, f, s, r, cost_input):
     elif k < d and (d - k) > 3: report += "呈現 **死亡交叉** 向下，短線有回檔壓力。\n"
     else: report += "目前雙線糾結，短線方向混沌。\n"
 
-    # 防線與策略
     report += f"- **關鍵區間**：壓力 **{r1:.2f}** / 支撐 **{s1:.2f}**。\n"
     
     if cost_input > 0:
@@ -199,19 +186,39 @@ if stock_input:
             tz = timezone(timedelta(hours=8))
             is_tw = symbol.endswith(('.TW', '.TWO', '.TE'))
             
-            # 指標計算
             f_sim, s_sim, r_sim = estimate_chip_flow(df)
             _, _, hist = perform_macd_full(df['close'].tolist(), is_tw)
             rsi_vals = calculate_rsi(df['close'].tolist())
             k_vals, d_vals = calculate_kd(df['high'].tolist(), df['low'].tolist(), df['close'].tolist())
             
-            # 長度強制對齊確保不報錯
-            l_df = len(df)
+            # 💡 核心防呆：強制陣列長度對齊機制
+            target_len = len(df)
+            def align_len(arr, pad_val=0):
+                arr = list(arr)
+                if len(arr) == target_len: return arr
+                elif len(arr) > target_len: return arr[-target_len:]
+                else: return [pad_val] * (target_len - len(arr)) + arr
+
+            # 將所有指標陣列強制補齊至與 K 線完全相同的長度
+            aligned_hist = align_len(hist, 0)
+            aligned_rsi = align_len(rsi_vals, 50.0)
+            aligned_k = align_len(k_vals, 50.0)
+            aligned_d = align_len(d_vals, 50.0)
+            aligned_f = align_len(f_sim, 50.0)
+            aligned_s = align_len(s_sim, 50.0)
+            aligned_r = align_len(r_sim, 50.0)
+
+            # 建立表格，絕對不會再報 ValueError
             source = pd.DataFrame({
-                '日期': [datetime.fromtimestamp(t, tz=tz).strftime('%Y/%m/%d') for t in df['ts']][:l_df],
-                '收盤價': df['close'].values[:l_df],
-                '外資': f_sim[:l_df], '投信': s_sim[:l_df], '散戶': r_sim[:l_df],
-                'MACD': hist[:l_df], 'RSI': rsi_vals[:l_df], 'K': k_vals[:l_df], 'D': d_vals[:l_df]
+                '日期': [datetime.fromtimestamp(t, tz=tz).strftime('%Y/%m/%d') for t in df['ts']],
+                '收盤價': df['close'].values,
+                '外資': aligned_f, 
+                '投信': aligned_s, 
+                '散戶': aligned_r,
+                'MACD': aligned_hist, 
+                'RSI': aligned_rsi, 
+                'K': aligned_k, 
+                'D': aligned_d
             }).drop_duplicates(subset=['日期'])
 
             # 圖表互動與美學設定
@@ -255,22 +262,20 @@ if stock_input:
             txt_r = line_r.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold').encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
             c_rsi = (line_r + selectors + rules + txt_r).properties(height=120, title="RSI (14)")
 
-            # 將五張圖表垂直拼合
             st.altair_chart(alt.vconcat(c_price, c_chip, c_macd, c_kd, c_rsi).resolve_scale(x='shared'), use_container_width=True)
 
             # 診斷看板
             st.divider()
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("現價", f"${df['close'].iloc[-1]:.2f}")
-            m2.metric("法人水位", f"{f_sim[-1]:.1f}")
-            score = sum([hist[-1] > hist[-2], rsi_vals[-1] > 50]) + 1
+            m2.metric("法人水位", f"{aligned_f[-1]:.1f}")
+            score = sum([aligned_hist[-1] > aligned_hist[-2] if len(aligned_hist)>1 else False, aligned_rsi[-1] > 50]) + 1
             m3.metric("共振得分", f"{score} 分")
             roi = (df['close'].iloc[-1] - cost_input) / cost_input if cost_input > 0 else 0
-            m4.metric("損益/熱度", f"{roi:+.2%}" if cost_input > 0 else f"散戶 {r_sim[-1]:.1f}")
+            m4.metric("損益/熱度", f"{roi:+.2%}" if cost_input > 0 else f"散戶 {aligned_r[-1]:.1f}")
 
-            st.markdown(generate_pro_report(df, score, rsi_vals[-1], k_vals[-1], d_vals[-1], f_sim[-1], s_sim[-1], r_sim[-1], cost_input))
+            st.markdown(generate_pro_report(df, score, aligned_rsi[-1], aligned_k[-1], aligned_d[-1], aligned_f[-1], aligned_s[-1], aligned_r[-1], cost_input))
 
-            # 歷史軌跡與新聞
             st.subheader("📅 近 5 日量化數據")
             st.table(source[['日期', '收盤價', '外資', '投信', 'MACD', 'K', 'D', 'RSI']].tail(5))
 
