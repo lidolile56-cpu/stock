@@ -1,4 +1,4 @@
-# 檔名：20260428_持股分析系統_圖例右置版.py
+# 檔名：20260428_持股分析系統_版面與標題優化版.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -14,17 +14,26 @@ from datetime import datetime, timezone, timedelta
 # ==========================================
 st.set_page_config(page_title="持股分析系統 PRO", layout="wide")
 
+# 💡 核心佈局：等比例加寬左右邊界，並確保標題單行顯示
 st.markdown("""
     <style>
     .block-container { 
         padding-top: 2rem !important; 
-        padding-left: 2% !important; 
-        padding-right: 15% !important; 
+        padding-left: 4% !important;   /* 邊距等比加大 */
+        padding-right: 25% !important; /* 邊距等比加大 */
         max-width: 1200px; 
     }
     a { text-decoration: none !important; color: #1f77b4 !important; }
     .stMetric { background-color: #fcfcfc; padding: 10px; border-radius: 10px; border: 1px solid #eee; }
     .stTable { font-size: 14px !important; }
+    
+    /* 確保標題絕對不換行，並隨螢幕自動縮小 */
+    .responsive-title {
+        white-space: nowrap;
+        font-size: clamp(1.2rem, 5vw, 2.5rem);
+        font-weight: bold;
+        margin-bottom: 10px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -181,7 +190,8 @@ def generate_pro_report(df, res_score, rsi, k, d, f, s, r, cost_input):
 # ==========================================
 # 🚀 第四部分：主介面與全圖表互動渲染
 # ==========================================
-st.title("🌍 持股分析系統 PRO")
+# 💡 將原本的 st.title 改用 markdown 以確保單行與自適應
+st.markdown('<div class="responsive-title">🌍 持股分析系統 PRO</div>', unsafe_allow_html=True)
 st.markdown("---")
 
 c_in1, c_in2 = st.columns([3, 1])
@@ -203,7 +213,6 @@ if stock_input:
             rsi_vals = calculate_rsi(df['close'].tolist())
             k_vals, d_vals = calculate_kd(df['high'].tolist(), df['low'].tolist(), df['close'].tolist())
             
-            # 強制陣列長度對齊
             target_len = len(df)
             def align_len(arr, pad_val=0):
                 arr = list(arr)
@@ -231,7 +240,6 @@ if stock_input:
                 'D': aligned_d
             }).drop_duplicates(subset=['日期'])
 
-            # 💡 核心互動：全域共用的游標選擇器與對齊線
             morandi_yellow = '#CBAE73'
             nearest = alt.selection_point(nearest=True, on='mouseover', fields=['日期'], empty=False)
             x_axis = alt.X('日期', axis=alt.Axis(labels=False, title=None, ticks=False))
@@ -239,35 +247,30 @@ if stock_input:
             rules = alt.Chart(source).mark_rule(color='gray', strokeDash=[3,3]).encode(x=x_axis).transform_filter(nearest)
             
             # 1. 價格圖
-            line_p = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False)))
+            line_p = alt.Chart(source).mark_line(color='#1f77b4').encode(x=x_axis, y=alt.Y('收盤價', scale=alt.Scale(zero=False)))
             txt_d = line_p.mark_text(align='right', dx=-10, dy=-25, color=morandi_yellow, fontWeight='bold').encode(text='日期:N').transform_filter(nearest)
             txt_v = line_p.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold').encode(text=alt.Text('收盤價:Q', format='.2f')).transform_filter(nearest)
             c_price = (line_p + selectors + rules + txt_d + txt_v).properties(height=200, title="股價走勢")
 
-            # 2. 外資圖 (🟦 實線)
-            line_f = alt.Chart(source).mark_line(color='#1f77b4', strokeWidth=2).encode(x=x_axis, y=alt.Y('外資', scale=alt.Scale(domain=[0, 100]), title=None))
-            txt_f = line_f.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(text=alt.Text('外資:Q', format='.1f')).transform_filter(nearest)
-            c_f = (line_f + selectors + rules + txt_f).properties(height=80, title="🟦 外資動向 (實線)")
+            # 2. 三大勢力籌碼圖
+            chip_melt = source.melt('日期', value_vars=['外資', '投信', '散戶'], var_name='勢力', value_name='力道')
+            c_chip = alt.Chart(chip_melt).mark_line(strokeWidth=2).encode(
+                x=x_axis, 
+                y=alt.Y('力道', scale=alt.Scale(domain=[0, 100]), title=None), 
+                color=alt.Color(
+                    '勢力:N', 
+                    scale=alt.Scale(domain=['外資', '投信', '散戶'], range=['#1f77b4', '#2ca02c', '#d62728']),
+                    legend=alt.Legend(title=None, orient="right", titleFontSize=12, labelFontSize=12)
+                )
+            ).properties(height=150, title="籌碼動向 (🟦外資 / 🟩投信 / 🟥散戶)")
 
-            # 3. 投信圖 (🟧 虛線)
-            line_s = alt.Chart(source).mark_line(color='#ff7f0e', strokeWidth=2, strokeDash=[5,5]).encode(x=x_axis, y=alt.Y('投信', scale=alt.Scale(domain=[0, 100]), title=None))
-            txt_s = line_s.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(text=alt.Text('投信:Q', format='.1f')).transform_filter(nearest)
-            c_s = (line_s + selectors + rules + txt_s).properties(height=80, title="🟧 投信動向 (虛線)")
-
-            # 4. 散戶圖 (🟥 點線)
-            line_r = alt.Chart(source).mark_line(color='#d62728', strokeWidth=2, strokeDash=[2,2]).encode(x=x_axis, y=alt.Y('散戶', scale=alt.Scale(domain=[0, 100]), title=None))
-            txt_r_chip = line_r.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(text=alt.Text('散戶:Q', format='.1f')).transform_filter(nearest)
-            c_r_chip = (line_r + selectors + rules + txt_r_chip).properties(height=80, title="🟥 散戶動向 (點線)")
-
-            # 5. MACD 圖
-            bar_m = alt.Chart(source).mark_bar().encode(
+            # 3. MACD 動能圖
+            c_macd = alt.Chart(source).mark_bar().encode(
                 x=x_axis, y=alt.Y('MACD', title=None), 
                 color=alt.condition(alt.datum.MACD > 0, alt.value('#ff4b4b'), alt.value('#00cc96'))
-            )
-            txt_m = alt.Chart(source).mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(x=x_axis, y='MACD', text=alt.Text('MACD:Q', format='.3f')).transform_filter(nearest)
-            c_macd = (bar_m + selectors + rules + txt_m).properties(height=100, title="MACD 動能")
+            ).properties(height=100, title="MACD 動能")
 
-            # 6. KD 指標圖 (💡 圖例右側顯示)
+            # 4. KD 指標圖 
             kd_melt = source.melt('日期', value_vars=['K', 'D'], var_name='指標', value_name='數值')
             line_kd = alt.Chart(kd_melt).mark_line(strokeWidth=2).encode(
                 x=x_axis, y=alt.Y('數值', scale=alt.Scale(domain=[0, 100]), title=None),
@@ -277,13 +280,13 @@ if stock_input:
             txt_d_kd = alt.Chart(source).mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=12, fontWeight='bold').encode(x=x_axis, y='D', text=alt.Text('D:Q', format='.1f')).transform_filter(nearest)
             c_kd = (line_kd + selectors + rules + txt_k + txt_d_kd).properties(height=120, title="KD 指標 (9,3,3)")
 
-            # 7. RSI 圖
+            # 5. RSI 圖
             line_rsi = alt.Chart(source).mark_line(color='#8c564b', strokeWidth=2).encode(x=x_axis, y=alt.Y('RSI', scale=alt.Scale(domain=[0, 100]), title=None))
             txt_rsi = line_rsi.mark_text(align='right', dx=-10, dy=-10, color=morandi_yellow, fontSize=14, fontWeight='bold').encode(text=alt.Text('RSI:Q', format='.1f')).transform_filter(nearest)
             c_rsi = (line_rsi + selectors + rules + txt_rsi).properties(height=120, title="RSI (14)")
 
             # 垂直拼合所有圖表
-            final_chart = alt.vconcat(c_price, c_f, c_s, c_r_chip, c_macd, c_kd, c_rsi).resolve_scale(x='shared', color='independent')
+            final_chart = alt.vconcat(c_price, c_chip, c_macd, c_kd, c_rsi).resolve_scale(x='shared', color='independent')
             st.altair_chart(final_chart, use_container_width=True)
 
             # 診斷看板
@@ -306,7 +309,6 @@ if stock_input:
             news = get_google_news(display_name if display_name else symbol)
             for n in news: st.markdown(f"**[{n['title']}]({n['link']})** \n<small>🕒 {n['pubDate']}</small>", unsafe_allow_html=True)
             
-            # 💡 資料來源標註 (查核要求)
             st.caption("📊 數據來源：Yahoo Finance / FinMind 官方開源 API 授權")
             
         else: st.error("❌ 無法取得數據，請檢查輸入是否正確。")
